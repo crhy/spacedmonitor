@@ -216,12 +216,12 @@ class AppTable(Gtk.Box):
         """Show a modal confirmation and end the app on the End button."""
         question, detail = end_question(app)
         dialog = Gtk.MessageDialog(
-            parent=self.get_root(), modal=True,
-            message_class=Gtk.MessageQuestion, buttons=Gtk.ButtonsType.NONE,
+            transient_for=self.get_toplevel(), modal=True,
+            message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.NONE,
             text=f"{question}\n{detail}")
-        dialog.add_button("Cancel", Gtk.ButtonsType.CANCEL)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
         dialog.add_button("End", _END_ID)
-        dialog.set_default_response(Gtk.ButtonsType.CANCEL)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
         response = dialog.run()
         dialog.destroy()
         if response == _END_ID:
@@ -239,12 +239,12 @@ class AppTable(Gtk.Box):
     def _offer_force(self, app: AppUsage, msg: str) -> None:
         """Show the refusal and offer a force end as a secondary action."""
         dialog = Gtk.MessageDialog(
-            parent=self.get_root(), modal=True,
-            message_class=Gtk.MessageWarning, buttons=Gtk.ButtonsType.NONE,
+            transient_for=self.get_toplevel(), modal=True,
+            message_type=Gtk.MessageType.WARNING, buttons=Gtk.ButtonsType.NONE,
             text=msg)
-        dialog.add_button("Cancel", Gtk.ButtonsType.CANCEL)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
         dialog.add_button("Force end", _FORCE_ID)
-        dialog.set_default_response(Gtk.ButtonsType.CANCEL)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
         response = dialog.run()
         dialog.destroy()
         if response == _FORCE_ID:
