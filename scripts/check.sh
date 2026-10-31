@@ -23,6 +23,11 @@ if [ -f tests/ui_smoke.py ]; then
     echo "OK: UI smoke test (screenshots in build/screenshots/)"
 fi
 
+if [ -f tests/ui_live.py ]; then
+    timeout 180 xvfb-run -a -s "-screen 0 1600x1000x24" python3 tests/ui_live.py
+    echo "OK: Live UI test (real samplers, real window)"
+fi
+
 if grep -rIl --exclude-dir=.git -e systemd -e systemctl spaced_monitor bin packaging 2>/dev/null; then
     echo "FAIL: systemd reference above (Spaced Linux has no systemd)"; exit 1
 fi

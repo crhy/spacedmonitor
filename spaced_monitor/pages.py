@@ -294,6 +294,7 @@ class ProcessesPage(Gtk.Box):
                 for cells in child_rows(app):
                     self._add_child_row(cells, row)
                     row += 1
+        self._grid.show_all()
 
     def _add_header_row(self) -> None:
         """Attach the column-header buttons into the grid so they align with rows."""
@@ -727,3 +728,4 @@ class HardwarePage(Gtk.Box):
             card.set_margin_end(12)
             card.set_margin_bottom(12)
             self._flow.add(card)
+        self._flow.show_all()

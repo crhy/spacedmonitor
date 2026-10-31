@@ -133,7 +133,6 @@ def css(pal: Palette) -> str:
     b = _css_colour(pal.border)
     t = _css_colour(pal.text)
     m = _css_colour(pal.muted)
-    gpu_tint = rgba(pal.gpu_start, 0.25)
     gpu_blue = _css_colour(pal.gpu_end)
     red = _css_colour(pal.end_button)
     cool = _css_colour(pal.cpu_start)
@@ -159,14 +158,14 @@ button {{
     min-height: 0;
 }}
 button:hover, button:active, button:focus {{
-    background-color: {gpu_tint};
+    background-color: {rgba(pal.gpu_start, 0.10)};
     color: {t};
 }}
 button.tab-selected, button.tab-selected:hover,
 button.tab-selected:active, button.tab-selected:focus {{
-    background-color: {gpu_tint};
+    background-color: {rgba(pal.gpu_start, 0.40)};
     color: {gpu_blue};
-    border: 1px solid {b};
+    border: 1px solid {gpu_blue};
 }}
 entry, combobox entry {{
     background-color: {c};
@@ -216,7 +215,7 @@ combobox button {{
     color: {t};
 }}
 .tab-selected {{
-    background-color: {gpu_tint};
+    background-color: {rgba(pal.gpu_start, 0.40)};
     color: {gpu_blue};
     border-radius: 6px;
     padding: 4px 10px;

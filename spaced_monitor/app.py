@@ -150,7 +150,7 @@ class MonitorWindow(Gtk.Window):
         bar.pack_start(self._theme_btn, expand=False, fill=False, padding=0)
         return bar
 
-    def _build_cards(self) -> Gtk.Box:
+    def _build_cards(self) -> Gtk.ScrolledWindow:
         """Middle of the page: gauge row, graph row, then the app table."""
         col = _vbox(spacing=10)
         gauges = _hbox(spacing=10)
@@ -172,7 +172,10 @@ class MonitorWindow(Gtk.Window):
         col.pack_start(graphs, expand=True, fill=True, padding=0)
         self._app_table = AppTable(self._pal, rows=5)
         col.pack_start(self._app_table, expand=False, fill=True, padding=0)
-        return col
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.add(col)
+        return scrolled
 
     def _build_footer(self) -> Gtk.Box:
         """Footer strip: four icon+text items split by thin border lines."""
@@ -302,6 +305,7 @@ class MonitorWindow(Gtk.Window):
             card.set_palette(pal)
         self._processes_page.set_palette(pal)
         self._hardware_page.set_palette(pal)
+        self._show_tab()
         settings = theme_mod.load_settings()
         settings["theme"] = name
         theme_mod.save_settings(settings)

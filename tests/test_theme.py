@@ -131,7 +131,7 @@ class TestCss(unittest.TestCase):
 
     def test_tab_selected_uses_gpu_tint(self):
         text = css(DARK)
-        self.assertIn("rgba(14, 165, 233, 0.25)", text)
+        self.assertIn("rgba(14, 165, 233, 0.4)", text)
 
     def test_muted_colour_dark(self):
         text = css(DARK)
