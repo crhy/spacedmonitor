@@ -180,11 +180,13 @@ window, .background {{
 }}
 .end-button {{
     background-color: {red};
+    background-image: none;
     color: #ffffff;
     border-radius: 10px;
     min-width: 20px;
     min-height: 20px;
     padding: 2px;
+    border: none;
 }}
 .page {{
     padding: 10px;

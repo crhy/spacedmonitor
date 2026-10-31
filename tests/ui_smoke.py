@@ -46,7 +46,7 @@ def _mock_snapshot() -> Snapshot:
         mem_total=16 * 1024**3,
     )
     disk = DiskInfo(read_bps=128 * 1024**2, write_bps=940 * 1024,
-                    used=None, total=None)
+                    used=int(48 * 1024**3), total=int(240 * 1024**3))
     net = NetInfo(rx_bps=50 * 1024**2, tx_bps=10 * 1024**2)
     fans = [Fan(label="fan1", rpm=1240)]
     temps = [Temperature("cpu", "core", 58.0), Temperature("cpu", "vr", 74.0),
@@ -89,9 +89,43 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
     # Top bar
     bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     bar.get_style_context().add_class("topbar")
-    bar.pack_start(Gtk.Label(label="S"), False, False, 0)
+    # Logo: 28px circle in GPU blue with white bold S
+    import cairo
+    logo = Gtk.DrawingArea()
+    logo.set_size_request(28, 28)
+    def _draw_logo(da, cr):
+        cr.set_source_rgb(*pal.gpu_start)
+        cr.arc(14, 14, 13, 0, 2 * 3.14159)
+        cr.fill()
+        cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(16)
+        cr.set_source_rgb(1, 1, 1)
+        m = cr.text_extents("S")
+        cr.move_to(14 - m.x_bearing - m.width / 2, 14 - m.y_bearing - m.height / 2)
+        cr.show_text("S")
+    logo.connect("draw", _draw_logo)
+    bar.pack_start(logo, False, False, 0)
     bar.pack_start(Gtk.Label(label="Spaced Monitor"), False, False, 0)
-    bar.pack_start(Gtk.Label(label="Updated just now"), True, False, 0)
+    # Tabs: linked toggle buttons
+    tabs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+    for tab_name in ("Overview", "Processes", "Hardware"):
+        btn = Gtk.ToggleButton(label=tab_name)
+        btn.get_style_context().add_class("linked")
+        if tab_name == "Overview":
+            btn.set_active(True)
+            btn.get_style_context().add_class("tab-selected")
+        tabs.pack_start(btn, False, False, 0)
+    bar.pack_start(tabs, True, False, 0)
+    # Green dot + status
+    status = Gtk.Label(label='<span foreground="#22c55e">●</span> Updated just now')
+    status.set_use_markup(True)
+    bar.pack_start(status, False, False, 0)
+    # Theme button
+    theme_btn = Gtk.Button()
+    theme_btn.set_image(Gtk.Image.new_from_icon_name(
+        "weather-clear-night-symbolic", Gtk.IconSize.BUTTON))
+    theme_btn.set_size_request(28, 28)
+    bar.pack_start(theme_btn, False, False, 0)
     root.pack_start(bar, False, True, 0)
     # Cards row
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -106,13 +140,16 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
     # Graph row: temperature (wide), disk, network
     graphs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     temp_card = TemperatureCard(pal)
-    temp_card.update(snap)
+    for i in range(300):
+        temp_card.update(snap)
     graphs.pack_start(temp_card, True, True, 0)
     disk_card = DiskCard(pal)
-    disk_card.update(snap)
+    for i in range(300):
+        disk_card.update(snap)
     graphs.pack_start(disk_card, False, True, 0)
     net_card = NetworkCard(pal)
-    net_card.update(snap)
+    for i in range(300):
+        net_card.update(snap)
     graphs.pack_start(net_card, False, True, 0)
     root.pack_start(graphs, True, True, 0)
     # App table
@@ -123,6 +160,10 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
                  int(13.2 * 1024**3), 128 * 1024**2, "rhy", ""),
         AppUsage("python3", [30], 5.0, int(0.3 * 1024**3), 0.0, 0,
                  0.0, "rhy", ""),
+        AppUsage("firefox", [40, 41, 42], 8.0, int(0.9 * 1024**3), 12.0,
+                 int(2.1 * 1024**3), 64 * 1024**2, "rhy", "firefox"),
+        AppUsage("steam", [50], 2.0, int(0.5 * 1024**3), 5.0,
+                 int(1.0 * 1024**3), 32 * 1024**2, "rhy", "steam"),
     ]
     table = AppTable(pal, rows=5)
     table.set_apps(apps)
@@ -130,10 +171,20 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
     # Footer
     footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
     footer.get_style_context().add_class("footer")
-    for label in ("Fans", "CPU power", "GPU power", "Uptime"):
+    fans_rpm = sum(f.rpm for f in snap.fans) if snap.fans else None
+    gpu_pw = snap.gpu.power_w if snap.gpu else None
+    uptime_h = int(snap.uptime_s) // 3600
+    uptime_m = (int(snap.uptime_s) % 3600) // 60
+    footer_vals = [
+        ("Fans", f"{fans_rpm:,} RPM" if fans_rpm else "—"),
+        ("CPU power", f"{int(round(snap.cpu_power_w))} W" if snap.cpu_power_w else "—"),
+        ("GPU power", f"{int(round(gpu_pw))} W" if gpu_pw else "—"),
+        ("Uptime", f"{uptime_h}h {uptime_m}m"),
+    ]
+    for label, val in footer_vals:
         item = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         item.pack_start(Gtk.Label(label=label), False, False, 0)
-        item.pack_start(Gtk.Label(label="—"), False, False, 0)
+        item.pack_start(Gtk.Label(label=val), False, False, 0)
         footer.pack_start(item, True, True, 0)
     root.pack_start(footer, False, True, 0)
     return root

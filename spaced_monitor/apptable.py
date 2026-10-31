@@ -69,11 +69,11 @@ def end_outcome(ok: bool, msg: str, forced: bool) -> tuple[str, bool]:
     return msg, not forced
 
 
-class AppTable(Gtk.Frame):
+class AppTable(Gtk.Box):
     """A card with a search/scope header and a table of the top apps."""
 
     def __init__(self, pal, rows: int = 5) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._row_count = max(1, rows)
@@ -113,7 +113,7 @@ class AppTable(Gtk.Frame):
         vbox = _vbox(spacing=6)
         vbox.pack_start(self._head, expand=False, fill=False, padding=0)
         vbox.pack_start(self._grid, expand=True, fill=True, padding=0)
-        self.add(vbox)
+        self.pack_start(vbox, True, True, 0)
 
     def _COLUMNS(self) -> tuple[str, ...]:
         """Column titles for the value columns."""
@@ -134,6 +134,7 @@ class AppTable(Gtk.Frame):
         self._grid.attach(icon, 1, r + 1, 1, 1)
         name = _value("")
         name.set_hexpand(True)
+        name.set_xalign(0.0)
         cells["name"] = name
         self._grid.attach(name, 2, r + 1, 1, 1)
         colours = (self._pal.cpu_start, self._pal.gpu_start,

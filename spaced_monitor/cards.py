@@ -56,11 +56,11 @@ def _title(text: str) -> Gtk.Label:
     return lbl
 
 
-class _CardBase(Gtk.Frame):
-    """Shared card frame with a gauge and info column."""
+class _CardBase(Gtk.Box):
+    """Shared card box with a gauge and info column."""
 
     def __init__(self, kind: str, title_text: str, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._gauge = Gauge(kind, pal)
@@ -80,7 +80,7 @@ class _CardBase(Gtk.Frame):
         row = _hbox(spacing=10)
         row.pack_start(self._gauge, expand=False, fill=False, padding=0)
         row.pack_start(self._info, expand=True, fill=True, padding=0)
-        self.add(row)
+        self.pack_start(row, True, True, 0)
 
     def set_palette(self, pal) -> None:
         """Swap the palette on theme change."""
@@ -128,11 +128,11 @@ class GpuCard(_CardBase):
         self._line2.set_text(fmt.watts(gpu.power_w))
 
 
-class MemoryCard(Gtk.Frame):
+class MemoryCard(Gtk.Box):
     """MEMORY card: gauge, pair, stacked bar, legend."""
 
     def __init__(self, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._gauge = Gauge("memory", pal)
@@ -152,7 +152,7 @@ class MemoryCard(Gtk.Frame):
         vbox.pack_start(top, expand=False, fill=False, padding=0)
         vbox.pack_start(self._bar, expand=False, fill=True, padding=0)
         vbox.pack_start(self._legend, expand=False, fill=False, padding=0)
-        self.add(vbox)
+        self.pack_start(vbox, True, True, 0)
 
     def set_palette(self, pal) -> None:
         """Swap the palette on theme change."""
@@ -185,11 +185,11 @@ class MemoryCard(Gtk.Frame):
         )
 
 
-class GpuMemoryCard(Gtk.Frame):
+class GpuMemoryCard(Gtk.Box):
     """GPU MEMORY card: gauge, pair, bar, legend."""
 
     def __init__(self, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._gauge = Gauge("gpu_memory", pal)
@@ -209,7 +209,7 @@ class GpuMemoryCard(Gtk.Frame):
         vbox.pack_start(top, expand=False, fill=False, padding=0)
         vbox.pack_start(self._bar, expand=False, fill=True, padding=0)
         vbox.pack_start(self._legend, expand=False, fill=False, padding=0)
-        self.add(vbox)
+        self.pack_start(vbox, True, True, 0)
 
     def set_palette(self, pal) -> None:
         """Swap the palette on theme change."""
@@ -252,11 +252,11 @@ def _dot(pal, colour: tuple[float, float, float], text: str) -> str:
     return f"<span foreground='{hexc}'>{text}</span>"
 
 
-class TemperatureCard(Gtk.Frame):
+class TemperatureCard(Gtk.Box):
     """Temperature card: CPU/GPU line graph with an 80 °C threshold."""
 
     def __init__(self, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._graph = LineGraph([pal.cpu_temp, pal.gpu_temp], 30, 90,
@@ -275,7 +275,7 @@ class TemperatureCard(Gtk.Frame):
         head.pack_start(legend, expand=True, fill=False, padding=0)
         vbox.pack_start(head, expand=False, fill=False, padding=0)
         vbox.pack_start(self._graph, expand=True, fill=True, padding=0)
-        self.add(vbox)
+        self.pack_start(vbox, True, True, 0)
 
     def set_palette(self, pal) -> None:
         """Swap palette and re-colour the legend."""
@@ -306,11 +306,11 @@ class TemperatureCard(Gtk.Frame):
                  f"● GPU {fmt.temp(self._gpu_val)}"))
 
 
-class DiskCard(Gtk.Frame):
+class DiskCard(Gtk.Box):
     """Disk activity card: read/write rates, storage bar, sparkline."""
 
     def __init__(self, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._title_lbl = _title("Disk activity")
@@ -333,7 +333,7 @@ class DiskCard(Gtk.Frame):
         store.pack_start(self._pct_lbl, expand=False, fill=False, padding=0)
         vbox.pack_start(store, expand=False, fill=False, padding=0)
         vbox.pack_start(self._spark, expand=False, fill=True, padding=0)
-        self.add(vbox)
+        self.pack_start(vbox, True, True, 0)
 
     def set_palette(self, pal) -> None:
         """Swap palette and re-colour the rate labels."""
@@ -370,11 +370,11 @@ class DiskCard(Gtk.Frame):
             self._pct_lbl.set_text("")
 
 
-class NetworkCard(Gtk.Frame):
+class NetworkCard(Gtk.Box):
     """Network card: download/upload rates and a sparkline."""
 
     def __init__(self, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._title_lbl = _title("Network")
@@ -389,7 +389,7 @@ class NetworkCard(Gtk.Frame):
         rates.pack_start(self._ul_lbl, expand=True, fill=False, padding=0)
         vbox.pack_start(rates, expand=False, fill=False, padding=0)
         vbox.pack_start(self._spark, expand=False, fill=True, padding=0)
-        self.add(vbox)
+        self.pack_start(vbox, True, True, 0)
 
     def set_palette(self, pal) -> None:
         """Swap palette and re-colour the rate labels."""

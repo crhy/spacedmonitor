@@ -209,7 +209,7 @@ def _flat_button(label: str, css: str = "") -> Gtk.Button:
     return btn
 
 
-class ProcessesPage(Gtk.Frame):
+class ProcessesPage(Gtk.Box):
     """The Processes page: searchable, sortable, scrollable, expandable list.
 
     Each row carries an End button; clicking a column header sorts by it and
@@ -217,7 +217,7 @@ class ProcessesPage(Gtk.Frame):
     """
 
     def __init__(self, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
         self._all: list = []
@@ -274,7 +274,7 @@ class ProcessesPage(Gtk.Frame):
         self._grid.set_column_spacing(8)
         self._scrolled.add(self._grid)
         vbox.pack_start(self._scrolled, True, True, 0)
-        self.add(vbox)
+        self.pack_start(vbox, True, True, 0)
 
     def _repaint_headers(self) -> None:
         """Mark the active sort column with its direction arrow."""
@@ -414,17 +414,17 @@ class ProcessesPage(Gtk.Frame):
 # --- Hardware page ----------------------------------------------------------
 
 
-class _HCard(Gtk.Frame):
+class _HCard(Gtk.Box):
     """A Hardware page card: title, optional model line, then its own body."""
 
     def __init__(self, title: str, model: str = "") -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self._body.pack_start(_title_label(title), False, False, 0)
         self._model = _muted(model)
         self._body.pack_start(self._model, False, False, 0)
-        self.add(self._body)
+        self.pack_start(self._body, True, True, 0)
 
     def set_model(self, model: str) -> None:
         """Set the small model line under the card title."""
@@ -679,12 +679,12 @@ class _NetworkCard(_HCard):
         return (iface, addr, rates)
 
 
-class HardwarePage(Gtk.Frame):
+class HardwarePage(Gtk.Box):
     """The Hardware page: responsive cards for CPU, sensors, GPU, memory,
     storage and network."""
 
     def __init__(self, pal) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("page")
         self._pal = pal
         self._build()
@@ -705,7 +705,7 @@ class HardwarePage(Gtk.Frame):
         self._flow.set_orientation(Gtk.Orientation.VERTICAL)
         self._flow.set_selection_mode(False)
         self._flow.set_max_children_per_line(3)
-        self.add(self._flow)
+        self.pack_start(self._flow, True, True, 0)
         self._build_cards()
 
     def _build_cards(self) -> None:
