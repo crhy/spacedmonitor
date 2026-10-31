@@ -14,8 +14,11 @@ from gi.repository import Gtk, GLib
 
 from spaced_monitor import theme as theme_mod
 from spaced_monitor import format as fmt
-from spaced_monitor.cards import CpuCard, GpuCard, MemoryCard, GpuMemoryCard
+from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
+                                  TemperatureCard, DiskCard, NetworkCard)
+from spaced_monitor.apptable import AppTable
 from spaced_monitor.collect import Sampler, Snapshot
+from spaced_monitor.processes import ProcessSampler
 
 
 def _hbox(spacing: int = 6) -> Gtk.Box:
@@ -80,12 +83,14 @@ class MonitorWindow(Gtk.Window):
     """The main Spaced Monitor window."""
 
     def __init__(self, sampler: Callable[[], Snapshot], refresh_ms: int = 1000,
-                 pal=None) -> None:
+                 pal=None, proc_sampler: Callable[[], list] | None = None) -> None:
         super().__init__(title="Spaced Monitor")
         self.set_default_size(1400, 900)
         self._pal = pal or theme_mod.palette("dark")
         self._sampler = sampler
         self._refresh_ms = refresh_ms
+        self._proc_sampler = proc_sampler or ProcessSampler().sample
+        self._last_proc = 0.0
         self._snapshot: Optional[Snapshot] = None
         self._last_sample_time: float = 0.0
         self._stop_event = threading.Event()
@@ -126,16 +131,28 @@ class MonitorWindow(Gtk.Window):
         return bar
 
     def _build_cards(self) -> Gtk.Box:
-        """Row of four gauge cards."""
-        row = _hbox(spacing=10)
+        """Middle of the page: gauge row, graph row, then the app table."""
+        col = _vbox(spacing=10)
+        gauges = _hbox(spacing=10)
         self._cpu_card = CpuCard(self._pal)
         self._gpu_card = GpuCard(self._pal)
         self._mem_card = MemoryCard(self._pal)
         self._gmem_card = GpuMemoryCard(self._pal)
         for card in (self._cpu_card, self._gpu_card,
                      self._mem_card, self._gmem_card):
-            row.pack_start(card, expand=True, fill=True, padding=0)
-        return row
+            gauges.pack_start(card, expand=True, fill=True, padding=0)
+        col.pack_start(gauges, expand=False, fill=True, padding=0)
+        graphs = _hbox(spacing=10)
+        self._temp_card = TemperatureCard(self._pal)
+        self._disk_card = DiskCard(self._pal)
+        self._net_card = NetworkCard(self._pal)
+        graphs.pack_start(self._temp_card, expand=True, fill=True, padding=0)
+        graphs.pack_start(self._disk_card, expand=False, fill=True, padding=0)
+        graphs.pack_start(self._net_card, expand=False, fill=True, padding=0)
+        col.pack_start(graphs, expand=True, fill=True, padding=0)
+        self._app_table = AppTable(self._pal, rows=5)
+        col.pack_start(self._app_table, expand=True, fill=True, padding=0)
+        return col
 
     def _build_footer(self) -> Gtk.Box:
         """Footer row with four items."""
@@ -157,7 +174,7 @@ class MonitorWindow(Gtk.Window):
         self._thread.start()
 
     def _worker_loop(self) -> None:
-        """Collect snapshots in a background thread."""
+        """Sample snapshots every refresh; the app list every 2 seconds."""
         while not self._stop_event.is_set():
             try:
                 snap = self._sampler()
@@ -165,6 +182,14 @@ class MonitorWindow(Gtk.Window):
                 snap = None
             if snap is not None:
                 GLib.idle_add(self._apply_snapshot, snap)
+            if time.monotonic() - self._last_proc >= 2.0:
+                self._last_proc = time.monotonic()
+                try:
+                    apps = self._proc_sampler()
+                except Exception:
+                    apps = None
+                if apps is not None:
+                    GLib.idle_add(self._apply_apps, apps)
             self._stop_event.wait(self._refresh_ms / 1000.0)
 
     def _apply_snapshot(self, snap: Snapshot) -> bool:
@@ -175,8 +200,16 @@ class MonitorWindow(Gtk.Window):
         self._gpu_card.update(snap)
         self._mem_card.update(snap)
         self._gmem_card.update(snap)
+        self._temp_card.push(snap.cpu.temp)
+        self._disk_card.update(snap.disk)
+        self._net_card.update(snap.net)
         self._update_footer(snap)
         self._status_lbl.set_text("Updated just now")
+        return False
+
+    def _apply_apps(self, apps: list) -> bool:
+        """Hand the process sampler's app list to the app table."""
+        self._app_table.set_apps(apps)
         return False
 
     def _update_footer(self, snap: Snapshot) -> None:
@@ -206,7 +239,8 @@ class MonitorWindow(Gtk.Window):
         self._pal = pal
         theme_mod.apply_css(pal)
         for card in (self._cpu_card, self._gpu_card,
-                     self._mem_card, self._gmem_card):
+                     self._mem_card, self._gmem_card,
+                     self._temp_card, self._disk_card, self._net_card):
             card.set_palette(pal)
         settings = theme_mod.load_settings()
         settings["theme"] = name

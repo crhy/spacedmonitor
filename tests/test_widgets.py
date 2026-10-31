@@ -147,5 +147,18 @@ class TestSparkline(unittest.TestCase):
         _save(surf, "sparkline-empty")
 
 
+class TestSeriesPoints(unittest.TestCase):
+    """_series_points maps values and skips None gaps (used by LineGraph)."""
+
+    def test_skips_none(self):
+        pts = widgets._series_points([10, None, 30], 0, 100, 0, 100,
+                                     0, 100, seconds=3)
+        assert len(pts) == 2
+        assert all(p[0] >= 0 for p in pts)
+
+    def test_empty(self):
+        assert widgets._series_points([], 0, 100, 0, 100, 0, 100, 3) == []
+
+
 if __name__ == "__main__":
     unittest.main()

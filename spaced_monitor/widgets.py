@@ -128,7 +128,8 @@ class Gauge(Gtk.DrawingArea):
 
     def _on_draw(self, da, cr) -> None:
         """Paint the gauge from the stored value."""
-        draw_gauge(cr, da.get_width(), da.get_height(), self._pal,
+        width, height = da.get_allocated_width(), da.get_allocated_height()
+        draw_gauge(cr, width, height, self._pal,
                    self._kind, self._percent)
 
 
@@ -170,7 +171,8 @@ class StackedBar(Gtk.DrawingArea):
 
     def _on_draw(self, da, cr) -> None:
         """Paint the current segments."""
-        draw_stacked_bar(cr, da.get_width(), da.get_height(), self._segments)
+        width, height = da.get_allocated_width(), da.get_allocated_height()
+        draw_stacked_bar(cr, width, height, self._segments)
 
 
 def draw_meter(cr, w: float, h: float, pal, fraction: float,
@@ -211,7 +213,8 @@ class Meter(Gtk.DrawingArea):
 
     def _on_draw(self, da, cr) -> None:
         """Paint the meter from the stored value."""
-        draw_meter(cr, da.get_width(), da.get_height(), self._pal,
+        width, height = da.get_allocated_width(), da.get_allocated_height()
+        draw_meter(cr, width, height, self._pal,
                    self._fraction, self._colour)
 
 
@@ -236,6 +239,8 @@ def _series_points(values, x0, x1, y0, y1, y_min, y_max, seconds):
         return pts
     span = float(seconds) if seconds > 0 else float(n)
     for j, v in enumerate(values):
+        if v is None:
+            continue
         age = n - 1 - j
         x = x1 - age * ((x1 - x0) / span)
         pts.append((max(x, x0), _value_y(v, y0, y1, y_min, y_max)))
@@ -352,9 +357,22 @@ class LineGraph(Gtk.DrawingArea):
                 del buf[0]
         self.queue_draw()
 
+    def expand_range(self, lo: float, hi: float) -> None:
+        """Widen the y range to include lo/hi (base range never shrinks)."""
+        changed = False
+        if lo is not None and lo < self._y_min:
+            self._y_min = lo
+            changed = True
+        if hi is not None and hi > self._y_max:
+            self._y_max = hi
+            changed = True
+        if changed:
+            self.queue_draw()
+
     def _on_draw(self, da, cr) -> None:
         """Paint the graph from the ring buffers."""
-        draw_line_graph(cr, da.get_width(), da.get_height(), self._pal,
+        width, height = da.get_allocated_width(), da.get_allocated_height()
+        draw_line_graph(cr, width, height, self._pal,
                         [(e[0], e[1]) for e in self._series], self._y_min,
                         self._y_max, self._threshold, self._unit, self._seconds)
 
@@ -415,5 +433,6 @@ class Sparkline(Gtk.DrawingArea):
 
     def _on_draw(self, da, cr) -> None:
         """Paint the sparkline from the ring buffers."""
-        draw_sparkline(cr, da.get_width(), da.get_height(), self._pal,
+        width, height = da.get_allocated_width(), da.get_allocated_height()
+        draw_sparkline(cr, width, height, self._pal,
                        [(e[0], e[1]) for e in self._series])

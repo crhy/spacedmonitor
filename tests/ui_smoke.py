@@ -18,7 +18,10 @@ from spaced_monitor import theme as theme_mod
 from spaced_monitor.collect import (
     Snapshot, CpuInfo, MemInfo, GpuInfo, DiskInfo, NetInfo, Fan,
 )
-from spaced_monitor.cards import CpuCard, GpuCard, MemoryCard, GpuMemoryCard
+from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
+                                  TemperatureCard, DiskCard, NetworkCard)
+from spaced_monitor.apptable import AppTable
+from spaced_monitor.processes import AppUsage
 
 SCREENSHOT_DIR = Path(__file__).resolve().parent.parent / "build" / "screenshots"
 
@@ -69,7 +72,31 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
         card.update(snap)
         cards.append(card)
         row.pack_start(card, True, True, 0)
-    root.pack_start(row, True, True, 0)
+    root.pack_start(row, False, True, 0)
+    # Graph row: temperature (wide), disk, network
+    graphs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    temp_card = TemperatureCard(pal)
+    temp_card.update(snap)
+    graphs.pack_start(temp_card, True, True, 0)
+    disk_card = DiskCard(pal)
+    disk_card.update(snap)
+    graphs.pack_start(disk_card, False, True, 0)
+    net_card = NetworkCard(pal)
+    net_card.update(snap)
+    graphs.pack_start(net_card, False, True, 0)
+    root.pack_start(graphs, True, True, 0)
+    # App table
+    apps = [
+        AppUsage("brave", [10, 11], 12.0, int(1.4 * 1024**3), 0.0, 0,
+                 940 * 1024, "rhy", "brave"),
+        AppUsage("strata", [20], 33.0, int(2.1 * 1024**3), 67.0,
+                 int(13.2 * 1024**3), 128 * 1024**2, "rhy", ""),
+        AppUsage("python3", [30], 5.0, int(0.3 * 1024**3), 0.0, 0,
+                 0.0, "rhy", ""),
+    ]
+    table = AppTable(pal, rows=5)
+    table.set_apps(apps)
+    root.pack_start(table, True, True, 0)
     # Footer
     footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
     footer.get_style_context().add_class("footer")
