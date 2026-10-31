@@ -9,7 +9,8 @@ import types
 import unittest
 
 from spaced_monitor.collect import (
-    Fan, GpuInfo, DiskInfo, NetInfo, Snapshot,
+    Fan, Filesystem, GpuExtra, GpuInfo, DiskInfo, Interface, NetInfo,
+    Snapshot, Temperature,
     nvidia_gpu, amd_gpu, gpu, RateSampler, CpuPower, Sampler,
 )
 
@@ -274,7 +275,9 @@ class TestSnapshot(unittest.TestCase):
                            mem_used=1, mem_total=2)
         clock = FakeClock(100.0)
         sampler = Sampler(ps=self._ps(), read=lambda p: "model name\t: AMD TestModel 8-Core Processor\n",
-                          gpu_fn=lambda: gpu_info, clock=clock)
+                          gpu_fn=lambda: gpu_info, clock=clock,
+                          iface_fn=lambda: {"eth0": "10.0.0.2"},
+                          gpu_extra_fn=lambda: GpuExtra(driver="5611.5", link_gen="4", link_width="16"))
         snap = sampler.sample()
         assert isinstance(snap, Snapshot)
         assert snap.cpu.model == "TestModel" and snap.cpu.percent == 12.5
@@ -285,6 +288,9 @@ class TestSnapshot(unittest.TestCase):
         assert snap.net == NetInfo(rx_bps=0.0, tx_bps=0.0)
         assert snap.fans == [Fan(label="fanx Chassis", rpm=1200)]
         assert snap.cpu_power_w is None
+        assert snap.gpu_extra == GpuExtra(driver="5611.5", link_gen="4", link_width="16")
+        assert snap.interfaces == [Interface(name="eth0", address="10.0.0.2",
+                                             rx_bps=0.0, tx_bps=0.0)]
         self.assertAlmostEqual(snap.uptime_s, 100.0, delta=1.0)
         assert snap.time is not None
 

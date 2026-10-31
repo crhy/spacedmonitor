@@ -43,6 +43,40 @@ class Fan:
 
 
 @dataclass
+class Temperature:
+    """One temperature reading: chip, label and degrees."""
+    chip: str
+    label: str
+    celsius: float
+
+
+@dataclass
+class Filesystem:
+    """One mounted filesystem: mount point, type and use."""
+    mount: str
+    fstype: str
+    used: Optional[int]
+    total: Optional[int]
+
+
+@dataclass
+class Interface:
+    """One network interface: name, address and rx/tx rates."""
+    name: str
+    address: Optional[str]
+    rx_bps: float
+    tx_bps: float
+
+
+@dataclass
+class GpuExtra:
+    """Static GPU details: driver version and PCIe link."""
+    driver: Optional[str]
+    link_gen: Optional[str]
+    link_width: Optional[str]
+
+
+@dataclass
 class GpuInfo:
     """GPU model, utilisation, temperature, power and memory (bytes)."""
     name: Optional[str]
@@ -152,6 +186,91 @@ def fans(ps) -> list[Fan]:
     return result
 
 
+def temperatures(ps) -> list:
+    """Return every reading from psutil.sensors_temperatures(), chip by chip."""
+    try:
+        raw = ps.sensors_temperatures()
+    except (AttributeError, OSError):
+        return []
+    result: list[Temperature] = []
+    for chip, readings in raw.items():
+        for r in readings:
+            result.append(Temperature(chip=chip,
+                                      label=(r.label or chip).strip(),
+                                      celsius=float(r.current)))
+    return result
+
+
+# Filesystems that are not real storage or are runtime plumbing.
+_SKIP_FSTYPES = frozenset({
+    "squashfs", "tmpfs", "overlay", "proc", "sysfs", "devtmpfs", "cgroup",
+    "cgroupfs", "autofs", "autofs-fs", "fuse", "nsfs", "virtual",
+})
+_SKIP_MOUNTS = ("/snap", "/var/lib/snap", "/var/lib/flatpak", "/run", "/tmp")
+
+
+def real_filesystem(fstype: str, mount: str) -> bool:
+    """True for a real filesystem worth showing (not squashfs/tmpfs/overlay/snap)."""
+    if fstype in _SKIP_FSTYPES:
+        return False
+    for skip in _SKIP_MOUNTS:
+        if mount == skip or mount.startswith(skip + "/"):
+            return False
+    return True
+
+
+def filesystems(ps) -> list:
+    """Return Filesystem for every real mounted filesystem, biggest first."""
+    try:
+        parts = ps.disk_partitions(all=False)
+    except (AttributeError, OSError):
+        return []
+    result: list[Filesystem] = []
+    for part in parts:
+        if not real_filesystem(part.fstype, part.mountpoint):
+            continue
+        try:
+            usage = ps.disk_usage(part.mountpoint)
+        except OSError:
+            continue
+        result.append(Filesystem(mount=part.mountpoint, fstype=part.fstype,
+                                 used=usage.used, total=usage.total))
+    result.sort(key=lambda f: f.total or 0, reverse=True)
+    return result
+
+
+def parse_ip_addr(out: str) -> dict:
+    """Map interface name -> primary address from `ip -j addr show` JSON."""
+    try:
+        data = json.loads(out)
+    except (ValueError, TypeError):
+        return {}
+    result: dict[str, str] = {}
+    for entry in data:
+        name = entry.get("addr") if isinstance(entry, dict) else None
+        if not isinstance(name, str):
+            continue
+        for block in entry.get("info") or []:
+            if not isinstance(block, dict) or block.get("family") != 2:
+                continue
+            fields = ((block.get("addr") or [""])[0]).split()
+            if len(fields) >= 2:
+                result[name] = fields[1].split("/")[0]
+            break
+    return result
+
+
+def interface_addresses(run: Callable = None) -> dict:
+    """Interface addresses from `ip -j addr show`; empty when ip is unavailable."""
+    if run is None:
+        run = _default_run
+    try:
+        out = run(["ip", "-j", "addr", "show"], timeout=2.0)
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return {}
+    return parse_ip_addr(out)
+
+
 def memory(ps) -> MemInfo:
     """Return MemInfo from psutil.virtual_memory() and psutil.swap_memory()."""
     vm = ps.virtual_memory()
@@ -241,6 +360,39 @@ def _parse_nvidia(out: str) -> Optional[GpuInfo]:
     )
 
 
+def nvidia_extra(run: Callable = None) -> Optional[GpuExtra]:
+    """Driver version and PCIe link from nvidia-smi; None when unavailable."""
+    if run is None:
+        run = _default_run
+    cmd = [
+        "nvidia-smi",
+        "--query-gpu=driver_version,pcie.link.gen.current,pcie.link.width.current",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        out = run(cmd, timeout=2.0)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return _parse_nvidia_extra(out)
+
+
+def _text(raw: str) -> Optional[str]:
+    """Keep a probe field as text; "[N/A]" and blanks become None."""
+    s = (raw or "").strip()
+    return None if not s or s == "[N/A]" else s
+
+
+def _parse_nvidia_extra(out: str) -> Optional[GpuExtra]:
+    """Parse the first nvidia-smi csv line into GpuExtra."""
+    line = (out or "").strip().splitlines()[0] if (out or "").strip() else ""
+    if not line:
+        return None
+    parts = [p.strip() for p in line.split(",")]
+    while len(parts) < 3:
+        parts.append("")
+    return GpuExtra(driver=_text(parts[0]), link_gen=_text(parts[1]), link_width=_text(parts[2]))
+
+
 def amd_gpu(root: str = "/sys/class/drm") -> Optional[GpuInfo]:
     """Collect the first AMD card that exposes gpu_busy_percent."""
     for card in sorted(glob.glob(os.path.join(root, "card*"))):
@@ -284,6 +436,13 @@ def gpu(run: Callable = None, drm_root: str = "/sys/class/drm") -> Optional[GpuI
     return amd_gpu(root=drm_root)
 
 
+def _virtual_interface(name: str) -> bool:
+    """True for loopback and container/VM plumbing, which we never show."""
+    if name == "lo" or name == "lo:" or name.startswith("lo:"):
+        return True
+    return name.startswith(("veth", "docker", "virbr", "tap", "br-", "vnet"))
+
+
 class RateSampler:
     """Turn psutil's cumulative disk and network counters into rates."""
 
@@ -291,21 +450,32 @@ class RateSampler:
         self._ps = ps
         self._clock = clock
         self._prev: Optional[Tuple[float, float, float, float, float]] = None
+        self._prev_iface: dict = {}
+        self.per_interface: dict = {}
 
     def sample(self) -> Tuple[DiskInfo, NetInfo]:
         """Return DiskInfo and NetInfo for the interval since the previous sample."""
         io = self._ps.disk_io_counters()
-        rx, tx = self._net_totals()
+        by_iface = self._net_by_iface()
+        rx = sum(v[0] for v in by_iface.values())
+        tx = sum(v[1] for v in by_iface.values())
         now = self._clock()
         if self._prev is None:
-            self._prev = (now, io.read_bytes, io.write_bytes, rx, tx)
             rates = (0.0, 0.0, 0.0, 0.0)
+            self.per_interface = {name: (0.0, 0.0) for name in by_iface}
         else:
             pt, pr, pw, prx, ptx = self._prev
-            self._prev = (now, io.read_bytes, io.write_bytes, rx, tx)
             dt = now - pt
-            rates = self._rate(pr, io.read_bytes, dt), self._rate(pw, io.write_bytes, dt)
-            rates += self._rate(prx, rx, dt), self._rate(ptx, tx, dt)
+            rates = (self._rate(pr, io.read_bytes, dt), self._rate(pw, io.write_bytes, dt),
+                     self._rate(prx, rx, dt), self._rate(ptx, tx, dt))
+            current = {}
+            for name, (cur_rx, cur_tx) in by_iface.items():
+                prev_rx, prev_tx = self._prev_iface.get(name, (0, 0))
+                current[name] = (self._rate(prev_rx, cur_rx, dt),
+                                 self._rate(prev_tx, cur_tx, dt))
+            self.per_interface = current
+        self._prev = (now, io.read_bytes, io.write_bytes, rx, tx)
+        self._prev_iface = by_iface
         used, total = self._root_usage()
         return (
             DiskInfo(read_bps=rates[0], write_bps=rates[1], used=used, total=total),
@@ -319,15 +489,20 @@ class RateSampler:
             return 0.0
         return (cur - prev) / dt
 
+    def _net_by_iface(self) -> dict:
+        """Cumulative rx/tx per real interface, as {name: (bytes_recv, bytes_sent)}."""
+        result: dict = {}
+        for name, entry in self._ps.net_io_counters(pernic=True).items():
+            if _virtual_interface(name):
+                continue
+            result[name] = (entry.bytes_recv, entry.bytes_sent)
+        return result
+
     def _net_totals(self) -> Tuple[int, int]:
         """Sum net_io_counters over real interfaces only."""
-        rx = tx = 0
-        for name, entry in self._ps.net_io_counters(pernic=True).items():
-            if name == "lo" or name.startswith(("veth", "docker", "virbr", "tap")):
-                continue
-            rx += entry.bytes_recv
-            tx += entry.bytes_sent
-        return rx, tx
+        by_iface = self._net_by_iface()
+        return (sum(v[0] for v in by_iface.values()),
+                sum(v[1] for v in by_iface.values()))
 
     def _root_usage(self) -> Tuple[Optional[int], Optional[int]]:
         """Used and total bytes of the root filesystem."""
@@ -381,6 +556,10 @@ class Snapshot:
     cpu_power_w: Optional[float]
     uptime_s: float
     time: datetime = field(default_factory=datetime.now)
+    temperatures: list = field(default_factory=list)
+    filesystems: list = field(default_factory=list)
+    interfaces: list = field(default_factory=list)
+    gpu_extra: Optional[GpuExtra] = None
 
 
 class Sampler:
@@ -388,7 +567,8 @@ class Sampler:
 
     def __init__(self, ps=None, run: Callable = None, clock: Callable[[], float] = time.monotonic,
                  power_root: str = "/sys/class/powercap", drm_root: str = "/sys/class/drm",
-                 gpu_fn: Callable = None, read: Callable[[str], str] = None) -> None:
+                 gpu_fn: Callable = None, read: Callable[[str], str] = None,
+                 iface_fn: Callable = None, gpu_extra_fn: Callable = None) -> None:
         """Wire the collectors; every probe is injectable for tests."""
         if ps is None:
             import psutil
@@ -398,19 +578,44 @@ class Sampler:
         self._rates = RateSampler(ps, clock=clock)
         self._power = CpuPower(root=power_root, clock=clock)
         self._gpu_fn = gpu_fn if gpu_fn is not None else lambda: gpu(run=run, drm_root=drm_root)
+        self._iface_fn = iface_fn if iface_fn is not None else lambda: interface_addresses(run)
+        self._gpu_extra_fn = gpu_extra_fn if gpu_extra_fn is not None else lambda: nvidia_extra(run)
+        self._addresses: Optional[dict] = None
+        self._extra: Optional[GpuExtra] = None
+        self._extra_read = False
+
+    def _interfaces(self) -> list:
+        """Merge the once-read addresses with the current per-interface rates."""
+        if self._addresses is None:
+            self._addresses = self._iface_fn()
+        rates = self._rates.per_interface
+        return [Interface(name, self._addresses.get(name), rates[name][0], rates[name][1])
+                for name in sorted(rates)]
+
+    def _gpu_extra(self) -> Optional[GpuExtra]:
+        """Driver version and PCIe link: read once, never again."""
+        if not self._extra_read:
+            self._extra_read = True
+            self._extra = self._gpu_extra_fn()
+        return self._extra
 
     def sample(self) -> Snapshot:
         """Take one full snapshot."""
         disk, net = self._rates.sample()
+        info = self._gpu_fn()
         return Snapshot(
             cpu=self._cpu.sample(),
             memory=memory(self._ps),
-            gpu=self._gpu_fn(),
+            gpu=info,
             disk=disk,
             net=net,
             fans=fans(self._ps),
             cpu_power_w=self._power.sample(),
             uptime_s=uptime_seconds(self._ps),
+            temperatures=temperatures(self._ps),
+            filesystems=filesystems(self._ps),
+            interfaces=self._interfaces(),
+            gpu_extra=self._gpu_extra() if info else None,
         )
 
 

@@ -17,6 +17,7 @@ from spaced_monitor import format as fmt
 from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
                                   TemperatureCard, DiskCard, NetworkCard)
 from spaced_monitor.apptable import AppTable
+from spaced_monitor.pages import HardwarePage, ProcessesPage
 from spaced_monitor.collect import Sampler, Snapshot
 from spaced_monitor.processes import ProcessSampler
 
@@ -99,11 +100,20 @@ class MonitorWindow(Gtk.Window):
         self.connect("destroy", self._on_close)
 
     def _build_ui(self) -> None:
-        """Build the full window layout."""
+        """Build the full window layout: bar, one visible page, footer."""
         root = _vbox(spacing=0)
         root.pack_start(self._build_topbar(), expand=False, fill=True, padding=0)
-        root.pack_start(self._build_cards(), expand=True, fill=True, padding=0)
+        self._overview = self._build_cards()
+        self._processes_page = ProcessesPage(self._pal)
+        self._hardware_page = HardwarePage(self._pal)
+        self._pages = {"overview": self._overview,
+                       "processes": self._processes_page,
+                       "hardware": self._hardware_page}
+        for page in self._pages.values():
+            root.pack_start(page, expand=True, fill=True, padding=0)
         root.pack_start(self._build_footer(), expand=False, fill=True, padding=0)
+        self._tab = "overview"
+        self._show_tab()
         self.add(root)
 
     def _build_topbar(self) -> Gtk.Box:
@@ -117,9 +127,12 @@ class MonitorWindow(Gtk.Window):
         name.get_style_context().add_class("card-title")
         bar.pack_start(name, expand=False, fill=False, padding=0)
         tabs = _hbox(spacing=4)
+        self._tab_btns: dict = {}
         for tab_name in ("Overview", "Processes", "Hardware"):
             btn = Gtk.Button(label=tab_name)
             btn.set_size_request(80, 28)
+            btn.connect("clicked", self._on_tab, tab_name.lower())
+            self._tab_btns[tab_name.lower()] = btn
             tabs.pack_start(btn, expand=False, fill=False, padding=0)
         bar.pack_start(tabs, expand=True, fill=False, padding=0)
         self._status_lbl = _muted("Updated just now")
@@ -167,6 +180,24 @@ class MonitorWindow(Gtk.Window):
             row.pack_start(item, expand=True, fill=True, padding=0)
         return row
 
+    def _on_tab(self, _btn, name: str) -> None:
+        """Switch to the clicked page."""
+        if name == self._tab or name not in self._pages:
+            return
+        self._tab = name
+        self._show_tab()
+
+    def _show_tab(self) -> None:
+        """Show one page at a time and mark its tab button as selected."""
+        for key, page in self._pages.items():
+            page.set_visible(key == self._tab)
+        for key, btn in self._tab_btns.items():
+            ctx = btn.get_style_context()
+            if key == self._tab:
+                ctx.add_class("tab-selected")
+            else:
+                ctx.remove_class("tab-selected")
+
     def start_worker(self) -> None:
         """Start the sampler thread."""
         self._thread = threading.Thread(target=self._worker_loop,
@@ -200,16 +231,18 @@ class MonitorWindow(Gtk.Window):
         self._gpu_card.update(snap)
         self._mem_card.update(snap)
         self._gmem_card.update(snap)
-        self._temp_card.push(snap.cpu.temp)
-        self._disk_card.update(snap.disk)
-        self._net_card.update(snap.net)
+        self._temp_card.update(snap)
+        self._disk_card.update(snap)
+        self._net_card.update(snap)
         self._update_footer(snap)
+        self._hardware_page.update(snap)
         self._status_lbl.set_text("Updated just now")
         return False
 
     def _apply_apps(self, apps: list) -> bool:
-        """Hand the process sampler's app list to the app table."""
+        """Hand the process sampler's app list to both app lists."""
         self._app_table.set_apps(apps)
+        self._processes_page.set_apps(apps)
         return False
 
     def _update_footer(self, snap: Snapshot) -> None:
@@ -242,6 +275,8 @@ class MonitorWindow(Gtk.Window):
                      self._mem_card, self._gmem_card,
                      self._temp_card, self._disk_card, self._net_card):
             card.set_palette(pal)
+        self._processes_page.set_palette(pal)
+        self._hardware_page.set_palette(pal)
         settings = theme_mod.load_settings()
         settings["theme"] = name
         theme_mod.save_settings(settings)
@@ -260,8 +295,7 @@ class MonitorApp(Gtk.Application):
 
     def __init__(self, sampler: Callable[[], Snapshot],
                  refresh_ms: int = 1000) -> None:
-        super().__init__(app_name="Monitor",
-                        app_id="org.spacedlinux.Monitor")
+        super().__init__()
         self._sampler = sampler
         self._refresh_ms = refresh_ms
         self._window: Optional[MonitorWindow] = None
@@ -270,7 +304,8 @@ class MonitorApp(Gtk.Application):
         """Create the window on startup."""
         Gtk.Application.do_startup(self)
         settings = theme_mod.load_settings()
-        gtk_settings = self.get_default_style_settings()
+        gtk_settings = (self.get_default_style_settings()
+                        if hasattr(self, "get_default_style_settings") else None)
         theme_name = theme_mod.resolve_theme(
             str(settings.get("theme", "system")), gtk_settings)
         pal = theme_mod.palette(theme_name)
@@ -282,13 +317,24 @@ class MonitorApp(Gtk.Application):
         )
         self._window.show()
         self._window.start_worker()
-        GLib.set_timeout(3000, self._tick_status)
+        GLib.timeout_add(3000, self._tick_status)
 
     def _tick_status(self) -> bool:
         """Update the status dot every 3 seconds."""
         if self._window:
             self._window.update_status_dot()
         return True
+
+    @property
+    def window(self) -> Optional[MonitorWindow]:
+        """The window created during startup, if any."""
+        return self._window
+
+    def do_activate(self) -> None:  # type: ignore[override]
+        """Bring the window forward; required or GTK quits after startup."""
+        if self._window:
+            self._window.show()
+            self._window.grab_focus()
 
     def do_quit(self) -> None:  # type: ignore[override]
         """Clean shutdown."""
@@ -301,4 +347,11 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point: run the real application."""
     sampler_obj = Sampler()
     app = MonitorApp(sampler=sampler_obj.sample)
-    return app.run(argv or [])
+    app.run(argv or [])
+    if app.window is None:
+        return 1
+    # This GTK build never calls do_main, so drive the loop here; it returns
+    # when the window closes.
+    Gtk.main()
+    app.quit()
+    return 0

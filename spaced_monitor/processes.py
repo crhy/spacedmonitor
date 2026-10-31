@@ -8,8 +8,17 @@ import pwd
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence
+
+
+@dataclass
+class ProcUsage:
+    """One process, as shown under an expanded app row."""
+    pid: int
+    name: str
+    cpu_percent: float
+    rss: int
 
 
 @dataclass
@@ -24,6 +33,7 @@ class AppUsage:
     disk_bps: float
     user: str
     icon: str
+    children: list = field(default_factory=list)
 
 
 # Known process names that need a special label (not capitalised or renamed).
@@ -242,9 +252,10 @@ class ProcessSampler:
             disk = self._io_delta(proc, pid)
             g = groups.setdefault((name, user), {
                 "pids": [], "cpu": 0.0, "rss": 0, "gpu_percent": 0.0,
-                "gpu_mem": 0, "disk": 0,
+                "gpu_mem": 0, "disk": 0, "children": [],
             })
             g["pids"].append(pid)
+            g["children"].append(ProcUsage(pid, name, cpu, rss))
             g["cpu"] += cpu
             g["rss"] += rss
             g["gpu_percent"] += gpu_sm.get(pid, 0.0)
@@ -262,6 +273,8 @@ class ProcessSampler:
                 rss=g["rss"], gpu_percent=g["gpu_percent"], gpu_mem=g["gpu_mem"],
                 disk_bps=(g["disk"] / dt) if dt > 0 else 0.0,
                 user=user, icon=icon_for(name),
+                children=sorted(g["children"],
+                                key=lambda p: p.cpu_percent, reverse=True),
             ))
         rows.sort(key=lambda a: a.cpu_percent, reverse=True)
         return rows

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import tempfile
@@ -134,6 +135,9 @@ def css(pal: Palette) -> str:
     m = _css_colour(pal.muted)
     gpu_tint = rgba(pal.gpu_start, 0.25)
     red = _css_colour(pal.end_button)
+    cool = _css_colour(pal.cpu_start)
+    warm = _css_colour(pal.cpu_temp)
+    hot = _css_colour(pal.threshold)
     return f"""\
 window, .background {{
     background-color: {w};
@@ -181,6 +185,27 @@ window, .background {{
     min-width: 20px;
     min-height: 20px;
     padding: 2px;
+}}
+.page {{
+    padding: 10px;
+}}
+.col-header {{
+    font-weight: bold;
+    font-size: 11px;
+    color: {m};
+    background-color: transparent;
+    border: none;
+    padding: 2px 6px;
+}}
+.temp-cool {{
+    color: {cool};
+}}
+.temp-warm {{
+    color: {warm};
+}}
+.temp-hot {{
+    color: {hot};
+    font-weight: bold;
 }}
 """
 
@@ -255,14 +280,42 @@ def save_settings(data: dict[str, object], path: str | None = None) -> None:
         raise
 
 
+def _gtk_preference(gtk_settings: object) -> tuple:
+    """Ask GTK for (prefer_dark, theme_name); (None, '') when unsupported."""
+    try:
+        return (bool(gtk_settings.get_gtk_application_prefer_dark_theme()),
+                str(gtk_settings.get_gtk_theme_name() or ""))
+    except AttributeError:
+        return (None, "")
+
+
+def _theme_from_environment() -> str:
+    """Guess dark or light from GTK_THEME and the user's gtk-3.0 config."""
+    if "dark" in os.environ.get("GTK_THEME", "").lower():
+        return "dark"
+    home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    ini = home / "gtk-3.0" / "gtk.ini"
+    if ini.is_file():
+        try:
+            parser = configparser.ConfigParser()
+            parser.read(ini)
+            if parser.getboolean("GTK", "gtk-application-prefer-dark-theme",
+                                 fallback=False):
+                return "dark"
+        except (configparser.Error, ValueError):
+            pass
+    return "light"
+
+
 def resolve_theme(setting: str, gtk_settings: object) -> str:
     """Resolve 'system' to 'dark' or 'light' using GTK preferences."""
     if setting in ("dark", "light"):
         return setting
-    prefer_dark = gtk_settings.get_gtk_application_prefer_dark_theme()
+    prefer_dark, theme_name = _gtk_preference(gtk_settings)
+    if prefer_dark is None:
+        return _theme_from_environment()
     if prefer_dark:
         return "dark"
-    theme_name = gtk_settings.get_gtk_theme_name() or ""
     if "dark" in theme_name.lower():
         return "dark"
     return "light"
