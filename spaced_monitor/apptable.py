@@ -48,6 +48,7 @@ class AppTable(Gtk.Box):
     def __init__(self, pal) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
+        self.get_style_context().add_class("app-table")
         self._pal = pal
         self._all_apps: list[AppUsage] = []
         self._apps: list[AppUsage] = []

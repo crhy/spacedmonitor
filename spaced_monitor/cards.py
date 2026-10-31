@@ -85,6 +85,26 @@ class _CardBase(Gtk.Box):
         row.pack_start(self._gauge, expand=False, fill=False, padding=0)
         row.pack_start(self._info, expand=True, fill=True, padding=0)
         self.pack_start(row, True, True, 0)
+        self.connect("size-allocate", self._on_size_allocate)
+
+    def _on_size_allocate(self, _widget, _allocation) -> None:
+        """Hide detail lines below 260px, title below 170px."""
+        w = self.get_allocated_width()
+        if w < 170:
+            self._title_lbl.set_visible(False)
+            self._model_lbl.set_visible(False)
+            self._line1.set_visible(False)
+            self._line2.set_visible(False)
+        elif w < 260:
+            self._title_lbl.set_visible(True)
+            self._model_lbl.set_visible(False)
+            self._line1.set_visible(False)
+            self._line2.set_visible(False)
+        else:
+            self._title_lbl.set_visible(True)
+            self._model_lbl.set_visible(True)
+            self._line1.set_visible(True)
+            self._line2.set_visible(True)
 
     def set_palette(self, pal) -> None:
         """Swap the palette on theme change."""
@@ -157,6 +177,29 @@ class MemoryCard(Gtk.Box):
         vbox.pack_start(self._bar, expand=False, fill=True, padding=0)
         vbox.pack_start(self._legend, expand=False, fill=False, padding=0)
         self.pack_start(vbox, True, True, 0)
+        self.connect("size-allocate", self._on_size_allocate)
+
+    def _on_size_allocate(self, _widget, _allocation) -> None:
+        """Hide detail lines below 260px, title below 170px."""
+        w = self.get_allocated_width()
+        if w < 170:
+            self._title_lbl.set_visible(False)
+            self._big_lbl.set_visible(False)
+            self._pct_lbl.set_visible(False)
+            self._bar.set_visible(False)
+            self._legend.set_visible(False)
+        elif w < 260:
+            self._title_lbl.set_visible(True)
+            self._big_lbl.set_visible(False)
+            self._pct_lbl.set_visible(False)
+            self._bar.set_visible(False)
+            self._legend.set_visible(False)
+        else:
+            self._title_lbl.set_visible(True)
+            self._big_lbl.set_visible(True)
+            self._pct_lbl.set_visible(True)
+            self._bar.set_visible(True)
+            self._legend.set_visible(True)
 
     def set_palette(self, pal) -> None:
         """Swap the palette on theme change."""
@@ -214,6 +257,29 @@ class GpuMemoryCard(Gtk.Box):
         vbox.pack_start(self._bar, expand=False, fill=True, padding=0)
         vbox.pack_start(self._legend, expand=False, fill=False, padding=0)
         self.pack_start(vbox, True, True, 0)
+        self.connect("size-allocate", self._on_size_allocate)
+
+    def _on_size_allocate(self, _widget, _allocation) -> None:
+        """Hide detail lines below 260px, title below 170px."""
+        w = self.get_allocated_width()
+        if w < 170:
+            self._title_lbl.set_visible(False)
+            self._big_lbl.set_visible(False)
+            self._pct_lbl.set_visible(False)
+            self._bar.set_visible(False)
+            self._legend.set_visible(False)
+        elif w < 260:
+            self._title_lbl.set_visible(True)
+            self._big_lbl.set_visible(False)
+            self._pct_lbl.set_visible(False)
+            self._bar.set_visible(False)
+            self._legend.set_visible(False)
+        else:
+            self._title_lbl.set_visible(True)
+            self._big_lbl.set_visible(True)
+            self._pct_lbl.set_visible(True)
+            self._bar.set_visible(True)
+            self._legend.set_visible(True)
 
     def set_palette(self, pal) -> None:
         """Swap the palette on theme change."""

@@ -109,6 +109,8 @@ class MonitorWindow(Gtk.Window):
         self._last_sample_time: float = 0.0
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._user_dragged = False
+        self._pane_fracs = default_fractions()
         self._build_ui()
         self.connect("destroy", self._on_close)
 
@@ -180,14 +182,10 @@ class MonitorWindow(Gtk.Window):
         self._net_card = NetworkCard(self._pal)
         self._app_table = AppTable(self._pal)
 
-        gauges = Gtk.FlowBox()
-        gauges.set_max_children_per_line(4)
-        gauges.set_min_children_per_line(2)
-        gauges.set_selection_mode(Gtk.SelectionMode.NONE)
+        gauges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         for card in (self._cpu_card, self._gpu_card,
                      self._mem_card, self._gmem_card):
-            card.set_size_request(220, -1)
-            gauges.add(card)
+            gauges.pack_start(card, True, True, 0)
 
         graphs = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         graphs.pack1(self._temp_card, True, True)
@@ -210,6 +208,7 @@ class MonitorWindow(Gtk.Window):
         outer.connect("drag-end", self._on_pane_drag)
         inner.connect("drag-end", self._on_pane_drag)
         graphs.connect("drag-end", self._on_pane_drag)
+        outer.connect("size-allocate", self._on_overview_resize)
         return outer
 
     def _restore_panes(self) -> None:
@@ -226,7 +225,27 @@ class MonitorWindow(Gtk.Window):
 
     def _on_pane_drag(self, paned, _handle, _is_reposition) -> None:
         """Save pane fractions after the user stops dragging."""
+        self._user_dragged = True
         GLib.timeout_add(300, self._do_save_panes)
+
+    def _on_overview_resize(self, _widget, _allocation) -> None:
+        """Re-apply saved fractions on every resize unless user dragged this session."""
+        if self._user_dragged:
+            return
+        GLib.timeout_add(0, self._apply_fractions)
+
+    def _apply_fractions(self) -> bool:
+        """Set Paned positions from fractions (deferred to after layout pass)."""
+        ov_h = self._overview.get_allocated_height()
+        ov_w = self._overview.get_allocated_width()
+        if ov_h < 1 or ov_w < 1:
+            return False
+        fr = self._pane_fracs
+        self._paned_outer.set_position(int(fr["pane_gauges"] * ov_h))
+        inner_h = ov_h - self._paned_outer.get_position()
+        self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
+        self._paned_mid_h.set_position(int(fr["pane_mid_h"] * ov_w))
+        return False
 
     def _do_save_panes(self) -> bool:
         """Persist current pane positions as fractions."""

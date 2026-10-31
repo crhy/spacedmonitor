@@ -124,6 +124,14 @@ def main() -> int:
     else:
         print(f"OK: CPU card model: {labels[1] if len(labels) > 1 else '?'}")
 
+    # Cards in one row at 1400x900.
+    card_ys = [c.get_allocation().y for c in
+               (win._cpu_card, win._gpu_card, win._mem_card, win._gmem_card)]
+    if max(card_ys) - min(card_ys) > 5:
+        errors.append(f"FAIL: gauge cards not in one row at 1400x900 (ys={card_ys})")
+    else:
+        print(f"OK: gauge cards in one row at 1400x900 (y={card_ys[0]})")
+
     # --- Processes tab assertions ---
     win._on_tab(None, "processes")
     _pump(1.0)
@@ -252,6 +260,28 @@ def main() -> int:
         errors.append(f"FAIL: CPU gauge height {gauge_h} < 1")
     else:
         print(f"OK: CPU gauge height {gauge_h} at small size")
+
+    # Four gauge cards share one row at 700x450.
+    card_ys_small = [c.get_allocation().y for c in
+                     (win._cpu_card, win._gpu_card, win._mem_card, win._gmem_card)]
+    if max(card_ys_small) - min(card_ys_small) > 5:
+        errors.append(f"FAIL: gauge cards not in one row at 700x450 (ys={card_ys_small})")
+    else:
+        print(f"OK: gauge cards in one row at 700x450 (y={card_ys_small[0]})")
+
+    # Process list scroll area >= 30% of window height.
+    scroll_h = win._app_table._scrolled.get_allocated_height()
+    if scroll_h < 0.30 * win_h:
+        errors.append(f"FAIL: scroll area {scroll_h}px < 30% of {win_h}px")
+    else:
+        print(f"OK: scroll area {scroll_h}px >= 30% of {win_h}px")
+
+    # Middle row >= 15% of window height.
+    mid_h = win._temp_card.get_allocated_height()
+    if mid_h < 0.15 * win_h:
+        errors.append(f"FAIL: middle row {mid_h}px < 15% of {win_h}px")
+    else:
+        print(f"OK: middle row {mid_h}px >= 15% of {win_h}px")
 
     # Three sections inside Gtk.Paned.
     if not isinstance(win._overview, Gtk.Paned):

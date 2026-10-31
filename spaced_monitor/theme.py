@@ -199,6 +199,10 @@ combobox button {{
     padding: 14px;
     color: {t};
 }}
+/* The app list needs vertical room for rows, so it uses a tighter frame. */
+.app-table {{
+    padding: 8px 10px;
+}}
 .card-title {{
     font-weight: bold;
     font-size: 13px;

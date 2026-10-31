@@ -118,7 +118,7 @@ class Gauge(Gtk.DrawingArea):
         self._kind = kind
         self._pal = pal or DARK
         self._percent = 0.0
-        self.set_size_request(80, 60)
+        self.set_size_request(60, 50)
         self.connect("draw", self._on_draw)
 
     def set_percent(self, v: float) -> None:
