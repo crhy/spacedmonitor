@@ -11,7 +11,7 @@ from spaced_monitor import format as fmt
 from spaced_monitor import theme as theme_mod
 from spaced_monitor.apptable import (end_outcome, end_question, meter_fraction)
 from spaced_monitor.collect import Filesystem, GpuExtra, Interface, Temperature
-from spaced_monitor.processes import AppUsage, ProcUsage, end_app, filter_apps
+from spaced_monitor.processes import AppUsage, ProcUsage, display_name, end_app, filter_apps
 from spaced_monitor.widgets import Gauge, Meter, StackedBar
 
 # Columns the Processes page can sort by, in header order.
@@ -258,14 +258,6 @@ class ProcessesPage(Gtk.Box):
         head.pack_start(self._scope_combo, False, False, 0)
         vbox.pack_start(head, False, False, 0)
         self._header_btns: dict = {}
-        headers = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for col in SORT_COLUMNS:
-            btn = _flat_button(_COLUMN_TITLES[col], css="col-header")
-            btn.connect("clicked", self._on_sort, col)
-            self._header_btns[col] = btn
-            headers.pack_start(btn, True, True, 0)
-        self._repaint_headers()
-        vbox.pack_start(headers, False, False, 0)
         self._scrolled = Gtk.ScrolledWindow()
         self._scrolled.set_policy(Gtk.PolicyType.AUTOMATIC,
                                   Gtk.PolicyType.AUTOMATIC)
@@ -293,7 +285,8 @@ class ProcessesPage(Gtk.Box):
         """Recreate every row from the current filter, sort and expansion."""
         for child in self._grid.get_children():
             self._grid.remove(child)
-        row = 0
+        self._add_header_row()
+        row = 1
         for app in self._shown:
             self._add_row(app, row)
             row += 1
@@ -301,6 +294,18 @@ class ProcessesPage(Gtk.Box):
                 for cells in child_rows(app):
                     self._add_child_row(cells, row)
                     row += 1
+
+    def _add_header_row(self) -> None:
+        """Attach the column-header buttons into the grid so they align with rows."""
+        spans = {"app": (0, 4), "cpu": (4, 2), "ram": (6, 2),
+                 "gpu": (8, 2), "disk": (10, 2)}
+        for col in SORT_COLUMNS:
+            btn = _flat_button(_COLUMN_TITLES[col], css="col-header")
+            btn.connect("clicked", self._on_sort, col)
+            self._header_btns[col] = btn
+            col_start, col_span = spans[col]
+            self._grid.attach(btn, col_start, 0, col_span, 1)
+        self._repaint_headers()
 
     def _add_row(self, app: AppUsage, row: int) -> None:
         """Attach one app row: end, twist toggle, icon, name, value pairs."""
@@ -311,10 +316,10 @@ class ProcessesPage(Gtk.Box):
         toggle = _flat_button("\u25b1" if key in self._expanded else "\u25b0")
         toggle.connect("clicked", self._on_expand, app)
         self._grid.attach(toggle, 1, row, 1, 1)
-        icon = Gtk.Label(label=app.icon or "\u25a4")
-        icon.set_name("icon")
+        icon = Gtk.Image.new_from_icon_name(
+            app.icon or "application-x-executable", Gtk.IconSize.MENU)
         self._grid.attach(icon, 2, row, 1, 1)
-        name = Gtk.Label(label=app.name)
+        name = Gtk.Label(label=display_name(app.name))
         name.set_hexpand(True)
         name.set_xalign(0.0)
         self._grid.attach(name, 3, row, 1, 1)
@@ -569,9 +574,10 @@ class _MemoryCard(_HCard):
         self._pal = pal
         self._big = _big_value(fmt.EMDASH)
         self._bar = StackedBar(pal)
+        self._bar.set_size_request(-1, 12)
         self._lines = [_muted("") for _ in range(2)]
         self.add_widget(self._big)
-        self.add_widget(self._bar, expand=True)
+        self.add_widget(self._bar, expand=False)
         for line in self._lines:
             self.add_widget(line)
 
