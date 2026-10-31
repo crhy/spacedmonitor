@@ -6,9 +6,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/screenshots
 
-mapfile -t py < <(find spaced_monitor tests bin scripts -type f \( -name '*.py' -o -path 'bin/*' \) | sort)
+# Only sources: bin/ holds extensionless scripts, and compiling them leaves bin/__pycache__/*.pyc behind.
+mapfile -t py < <(find spaced_monitor tests bin scripts -name __pycache__ -prune -o -type f \( -name '*.py' -o -path 'bin/*' \) -print | sort)
 python3 -m py_compile "${py[@]}"
-find spaced_monitor tests -name __pycache__ -prune -exec rm -rf {} +
+find spaced_monitor tests bin scripts -name __pycache__ -prune -exec rm -rf {} +
 echo "OK: ${#py[@]} Python files compile"
 
 mapfile -t sh < <(find scripts -name '*.sh' | sort)
