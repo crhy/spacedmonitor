@@ -186,25 +186,30 @@ window, .background {{
 
 
 _css_provider: object | None = None
+_screen: object | None = None
 
 
-def apply_css(pal: Palette) -> None:
-    """Install CSS on the default GTK screen, replacing any previous provider."""
-    global _css_provider
+def apply_css(pal: Palette, screen=None) -> None:
+    """Install CSS on the given GTK screen, replacing any previous provider."""
+    global _css_provider, _screen
     import gi
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gtk
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gtk, Gdk
     provider = Gtk.CssProvider()
-    provider.load_data(css(pal).encode("utf-8"))
+    provider.load_from_data(css(pal).encode("utf-8"))
+    if screen is None:
+        if _screen is None:
+            w = Gtk.OffscreenWindow()
+            w.show()
+            _screen = w.get_style_context().get_screen()
+            w.close()
+        screen = _screen
     if _css_provider is not None:
-        _css_provider.set_source(None)
+        Gtk.StyleContext.remove_provider_for_screen(screen, _css_provider)
+    Gtk.StyleContext.add_provider_for_screen(
+        screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
     _css_provider = provider
-    sm = Gtk.StyleManager.get_desktop_screen()
-    Gtk.StyleManager.add_provider(sm, provider, Gtk.StyleManager.SCOPE_GLOBAL,
-                                  Gtk.StyleManager.PRIORITY_USER)
-    Gtk.StyleManager.add_provider(Gtk.StyleManager.get_screen(), provider,
-                                  Gtk.StyleManager.SCOPE_GLOBAL,
-                                  Gtk.StyleManager.PRIORITY_USER)
 
 
 _DEFAULT_SETTINGS: dict[str, object] = {"theme": "system", "refresh_ms": 1000}
