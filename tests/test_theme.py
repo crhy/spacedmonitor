@@ -10,7 +10,8 @@ from unittest.mock import MagicMock
 
 from spaced_monitor.theme import (
     DARK, LIGHT, Palette, palette, gradient, rgba, css,
-    load_settings, save_settings, resolve_theme,
+    load_settings, save_settings, resolve_theme, palette_from_gtk,
+    _relative_luminance, _mix_towards, _lightness,
 )
 
 
@@ -242,6 +243,169 @@ class TestResolveTheme(unittest.TestCase):
         gs.get_gtk_application_prefer_dark_theme.return_value = False
         gs.get_gtk_theme_name.return_value = None
         self.assertEqual(resolve_theme("system", gs), "light")
+
+
+class TestPaletteFromGtk(unittest.TestCase):
+    """palette_from_gtk with a fake style context."""
+
+    def _fake_ctx(self, colours: dict):
+        """Return a fake style_context whose lookup_color returns Gdk.RGBA-like."""
+        class FakeRGBA:
+            def __init__(self, r, g, b):
+                self.red = r
+                self.green = g
+                self.blue = b
+
+        class FakeCtx:
+            def lookup_color(self, name):
+                if name in colours:
+                    r, g, b = colours[name]
+                    return (True, FakeRGBA(r, g, b))
+                return (False, FakeRGBA(0, 0, 0))
+
+        return FakeCtx()
+
+    def test_grey_dark_theme(self):
+        """Spaced Mint: grey bg, grey base -> dark grey palette."""
+        # Spaced-Mint: theme_bg_color #2b2b2b, theme_base_color #1d1d1d
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0x2b/255, 0x2b/255, 0x2b/255),
+            "theme_base_color": (0x1d/255, 0x1d/255, 0x1d/255),
+            "theme_fg_color": (0.9, 0.9, 0.9),
+            "theme_selected_bg_color": (0.2, 0.5, 0.8),
+        })
+        pal = palette_from_gtk(ctx)
+        # Should be dark (luminance of #2b2b2b < 0.5)
+        self.assertLess(_relative_luminance(pal.window), 0.5)
+        # Window should be grey
+        self.assertAlmostEqual(pal.window[0], pal.window[1], places=3)
+        self.assertAlmostEqual(pal.window[1], pal.window[2], places=3)
+        # Card should be close to base
+        self.assertAlmostEqual(pal.card[0], 0x1d/255, places=2)
+
+    def test_navy_dark_theme(self):
+        """Spaced Win11-Dark: navy bg -> dark navy palette."""
+        # Spaced-Win11-Dark: theme_bg_color #17243b, theme_base_color #111827
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0x17/255, 0x24/255, 0x3b/255),
+            "theme_base_color": (0x11/255, 0x18/255, 0x27/255),
+            "theme_fg_color": (0.85, 0.88, 0.92),
+            "theme_selected_bg_color": (0.3, 0.5, 0.9),
+        })
+        pal = palette_from_gtk(ctx)
+        self.assertLess(_relative_luminance(pal.window), 0.5)
+        # Navy: blue channel > red channel
+        self.assertGreater(pal.window[2], pal.window[0])
+
+    def test_light_theme(self):
+        """Spaced Win11-Light: light bg -> light palette."""
+        # Spaced-Win11-Light: theme_bg_color #f3f3f3, theme_base_color #ffffff
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0xf3/255, 0xf3/255, 0xf3/255),
+            "theme_base_color": (1.0, 1.0, 1.0),
+            "theme_fg_color": (0.1, 0.1, 0.1),
+            "theme_selected_bg_color": (0.2, 0.4, 0.8),
+        })
+        pal = palette_from_gtk(ctx)
+        self.assertGreater(_relative_luminance(pal.window), 0.5)
+        # Card is white, window is #f3f3f3: lightness diff ~4.7% > 4%, no shading
+        self.assertAlmostEqual(pal.card[0], 1.0, places=2)
+
+    def test_missing_colours_fallback(self):
+        """When no colours are found, falls back to DARK."""
+        ctx = self._fake_ctx({})
+        pal = palette_from_gtk(ctx)
+        # With no bg, is_dark depends on fg which is also missing -> fallback DARK
+        self.assertEqual(pal.window, DARK.window)
+        self.assertEqual(pal.card, DARK.card)
+        self.assertEqual(pal.text, DARK.text)
+
+    def test_low_contrast_card_shading(self):
+        """Card within 4% lightness of window gets shaded 6% towards fg."""
+        # Both bg and base are the same grey
+        grey = 0x2b / 255
+        ctx = self._fake_ctx({
+            "theme_bg_color": (grey, grey, grey),
+            "theme_base_color": (grey, grey, grey),
+            "theme_fg_color": (0.9, 0.9, 0.9),
+            "theme_selected_bg_color": (0.2, 0.5, 0.8),
+        })
+        pal = palette_from_gtk(ctx)
+        # Card should be lighter than window (shaded towards light fg)
+        self.assertGreater(_lightness(pal.card), _lightness(pal.window))
+
+    def test_accent_colours_preserved(self):
+        """Accent colours (cpu green, gpu blue, etc.) are always from fallback."""
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0.5, 0.5, 0.5),
+            "theme_base_color": (0.4, 0.4, 0.4),
+            "theme_fg_color": (0.9, 0.9, 0.9),
+            "theme_selected_bg_color": (0.2, 0.5, 0.8),
+        })
+        pal = palette_from_gtk(ctx)
+        # cpu_start should be the accent green, not derived from theme
+        self.assertEqual(pal.cpu_start, DARK.cpu_start)
+        self.assertEqual(pal.end_button, DARK.end_button)
+
+    def test_selected_bg_from_theme(self):
+        """selected_bg comes from theme_selected_bg_color."""
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0.2, 0.2, 0.2),
+            "theme_base_color": (0.15, 0.15, 0.15),
+            "theme_fg_color": (0.9, 0.9, 0.9),
+            "theme_selected_bg_color": (0.1, 0.6, 0.3),
+        })
+        pal = palette_from_gtk(ctx)
+        self.assertAlmostEqual(pal.selected_bg[1], 0.6, places=2)
+
+    def test_muted_is_fg_at_65_percent(self):
+        """muted = mix(window, fg, 0.65)."""
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0.0, 0.0, 0.0),
+            "theme_base_color": (0.1, 0.1, 0.1),
+            "theme_fg_color": (1.0, 1.0, 1.0),
+            "theme_selected_bg_color": (0.2, 0.5, 0.8),
+        })
+        pal = palette_from_gtk(ctx)
+        # mix(black, white, 0.65) = 0.65
+        self.assertAlmostEqual(pal.muted[0], 0.65, places=2)
+
+    def test_border_is_fg_at_12_percent(self):
+        """border = mix(window, fg, 0.12)."""
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0.0, 0.0, 0.0),
+            "theme_base_color": (0.1, 0.1, 0.1),
+            "theme_fg_color": (1.0, 1.0, 1.0),
+            "theme_selected_bg_color": (0.2, 0.5, 0.8),
+        })
+        pal = palette_from_gtk(ctx)
+        self.assertAlmostEqual(pal.border[0], 0.12, places=2)
+
+    def test_gauge_track_is_fg_at_14_percent(self):
+        """gauge_track = mix(window, fg, 0.14)."""
+        ctx = self._fake_ctx({
+            "theme_bg_color": (0.0, 0.0, 0.0),
+            "theme_base_color": (0.1, 0.1, 0.1),
+            "theme_fg_color": (1.0, 1.0, 1.0),
+            "theme_selected_bg_color": (0.2, 0.5, 0.8),
+        })
+        pal = palette_from_gtk(ctx)
+        self.assertAlmostEqual(pal.gauge_track[0], 0.14, places=2)
+
+
+class TestRelativeLuminance(unittest.TestCase):
+    """_relative_luminance returns correct values."""
+
+    def test_black(self):
+        self.assertAlmostEqual(_relative_luminance((0, 0, 0)), 0.0, places=3)
+
+    def test_white(self):
+        self.assertAlmostEqual(_relative_luminance((1, 1, 1)), 1.0, places=2)
+
+    def test_grey_mid(self):
+        lum = _relative_luminance((0.5, 0.5, 0.5))
+        self.assertGreater(lum, 0.15)
+        self.assertLess(lum, 0.25)
 
 
 if __name__ == "__main__":

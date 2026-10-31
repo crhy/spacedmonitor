@@ -113,6 +113,7 @@ class MonitorWindow(Gtk.Window):
         self._thread: Optional[threading.Thread] = None
         self._user_dragged = False
         self._pane_fracs = default_fractions()
+        self._follow_desktop = True
         self._build_ui()
         self.connect("destroy", self._on_close)
 
@@ -160,7 +161,7 @@ class MonitorWindow(Gtk.Window):
 
     def _update_theme_btn_icon(self) -> None:
         """Set the theme button to a sun or moon icon for the current theme."""
-        is_dark = self._pal is theme_mod.DARK
+        is_dark = theme_mod._relative_luminance(self._pal.window) < 0.5
         if is_dark:
             self._theme_btn.set_tooltip_text("Switch to light theme")
             icon_name = "weather-clear-night-symbolic"
@@ -383,14 +384,57 @@ class MonitorWindow(Gtk.Window):
         return False
 
     def _on_theme_toggle(self, _btn) -> None:
-        """Toggle dark/light theme."""
-        current = "dark" if self._pal is theme_mod.DARK else "light"
-        new = "light" if current == "dark" else "dark"
-        self._apply_theme(new)
+        """Toggle between 'follow desktop' and the opposite of the desktop palette."""
+        if self._follow_desktop:
+            # Override: pick the opposite of what the desktop would give us.
+            desktop_pal = self._desktop_palette()
+            is_dark = theme_mod._relative_luminance(desktop_pal.window) < 0.5
+            new = "light" if is_dark else "dark"
+            self._follow_desktop = False
+            self._apply_theme(new)
+        else:
+            # Return to following the desktop.
+            self._follow_desktop = True
+            self._rebuild_from_gtk()
+        settings = theme_mod.load_settings()
+        settings["theme"] = "system" if self._follow_desktop else (
+            "dark" if self._pal is theme_mod.DARK else "light")
+        theme_mod.save_settings(settings)
+
+    def _desktop_palette(self) -> theme_mod.Palette:
+        """Return the palette the desktop theme would produce."""
+        try:
+            win = self._overview
+            ctx = win.get_style_context()
+            return theme_mod.palette_from_gtk(ctx)
+        except Exception:
+            return theme_mod.palette("dark")
+
+    def _rebuild_from_gtk(self) -> None:
+        """Rebuild palette from the active GTK theme and redraw."""
+        try:
+            ctx = self.get_style_context()
+            pal = theme_mod.palette_from_gtk(ctx)
+        except Exception:
+            pal = theme_mod.palette("dark")
+        self._apply_palette(pal)
+
+    def _on_gtk_settings_change(self, _settings, _event) -> None:
+        """A desktop theme change always returns to 'follow desktop'."""
+        if not self._follow_desktop:
+            self._follow_desktop = True
+            settings = theme_mod.load_settings()
+            settings["theme"] = "system"
+            theme_mod.save_settings(settings)
+        self._rebuild_from_gtk()
 
     def _apply_theme(self, name: str) -> None:
-        """Switch palette, re-apply CSS, redraw widgets."""
+        """Switch to a fixed palette (dark or light)."""
         pal = theme_mod.palette(name)
+        self._apply_palette(pal)
+
+    def _apply_palette(self, pal: theme_mod.Palette) -> None:
+        """Apply a palette: re-apply CSS, redraw widgets."""
         self._pal = pal
         theme_mod.apply_css(pal)
         for card in (self._cpu_card, self._gpu_card,
@@ -401,9 +445,6 @@ class MonitorWindow(Gtk.Window):
         self._hardware_page.set_palette(pal)
         self._show_tab()
         self._update_theme_btn_icon()
-        settings = theme_mod.load_settings()
-        settings["theme"] = name
-        theme_mod.save_settings(settings)
 
     def update_status_dot(self) -> None:
         """Called periodically to update the 'Updated Xs ago' label."""
@@ -444,12 +485,35 @@ class MonitorApp(Gtk.Application):
         self._window._restore_panes()
         self._window.start_worker()
         GLib.timeout_add(3000, self._tick_status)
+        # If following the desktop, rebuild palette from the real GTK theme.
+        if str(settings.get("theme", "system")) == "system":
+            self._window._follow_desktop = True
+            self._window._rebuild_from_gtk()
+        # Connect to GTK settings changes for live theme following.
+        self._connect_gtk_settings()
 
     def _tick_status(self) -> bool:
         """Update the status dot every 3 seconds."""
         if self._window:
             self._window.update_status_dot()
         return True
+
+    def _connect_gtk_settings(self) -> None:
+        """Connect to Gtk.Settings notifications for live theme following."""
+        try:
+            import gi
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk as _Gtk
+            gtk_settings = _Gtk.Settings.get_default()
+            if self._window:
+                gtk_settings.connect(
+                    "notify::gtk-theme-name",
+                    self._window._on_gtk_settings_change)
+                gtk_settings.connect(
+                    "notify::gtk-application-prefer-dark-theme",
+                    self._window._on_gtk_settings_change)
+        except Exception:
+            pass
 
     @property
     def window(self) -> Optional[MonitorWindow]:

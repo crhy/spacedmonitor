@@ -125,11 +125,18 @@ class AppTable(Gtk.Box):
         return sort_apps(kept, column=self._col, reverse=self._desc)
 
     def _rebuild(self) -> None:
-        """Recreate every row in the grid from the current visible apps."""
+        """Recreate the data rows, keeping the column-header buttons pinned.
+
+        The header buttons are built once and never removed, so they stay
+        allocated (visible) across every refresh instead of briefly becoming
+        unallocated while the grid is rebuilt.
+        """
+        header_btns = set(self._header_btns.values())
         for child in self._grid.get_children():
-            self._grid.remove(child)
+            if child not in header_btns:
+                self._grid.remove(child)
         self._meters = []
-        self._build_col_headers()
+        self._repaint_headers()
         for r, app in enumerate(self._apps, start=1):
             self._add_row(app, r)
         self._update_meters()

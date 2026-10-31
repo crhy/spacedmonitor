@@ -25,6 +25,7 @@ class Palette:
     border: tuple[float, float, float]
     text: tuple[float, float, float]
     muted: tuple[float, float, float]
+    selected_bg: tuple[float, float, float]
     cpu_start: tuple[float, float, float]
     cpu_end: tuple[float, float, float]
     ram_start: tuple[float, float, float]
@@ -51,6 +52,7 @@ DARK = Palette(
     border=_hex("#1e2a44"),
     text=_hex("#e6ecf5"),
     muted=_hex("#8a96ab"),
+    selected_bg=_hex("#0ea5e9"),
     cpu_start=_hex("#22c55e"),
     cpu_end=_hex("#34d399"),
     ram_start=_hex("#0ea5e9"),
@@ -77,6 +79,7 @@ LIGHT = Palette(
     border=_hex("#dfe5ef"),
     text=_hex("#1f2937"),
     muted=_hex("#6b7280"),
+    selected_bg=_hex("#0ea5e9"),
     cpu_start=_hex("#22c55e"),
     cpu_end=_hex("#34d399"),
     ram_start=_hex("#0ea5e9"),
@@ -105,6 +108,111 @@ def palette(name: str) -> Palette:
     if name == "light":
         return LIGHT
     raise ValueError(f"unknown theme: {name!r}")
+
+
+def _relative_luminance(colour: tuple[float, float, float]) -> float:
+    """WCAG relative luminance from sRGB floats."""
+    def lin(c: float) -> float:
+        if c <= 0.0392:
+            return c / 12.92
+        if c <= 0.787:
+            return ((c + 0.055) / 1.055) ** 2.4
+        return c
+    r, g, b = colour
+    return 0.2127 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def _mix_towards(base: tuple[float, float, float],
+                 target: tuple[float, float, float],
+                 amount: float) -> tuple[float, float, float]:
+    """Mix base towards target by amount (0-1)."""
+    return tuple(b + (t - b) * amount for b, t in zip(base, target))  # type: ignore
+
+
+def _lightness(colour: tuple[float, float, float]) -> float:
+    """Perceptual lightness (0-1) for comparing two colours."""
+    r, g, b = colour
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def palette_from_gtk(style_context) -> Palette:
+    """Build a Palette from the active GTK theme's named colours.
+
+    Uses style_context.lookup_color(name) which returns (found, Gdk.RGBA).
+    Falls back to DARK or LIGHT when a colour is not found.
+    """
+    def _lookup(name: str) -> tuple[float, float, float] | None:
+        found, rgba_val = style_context.lookup_color(name)
+        if not found:
+            return None
+        return (rgba_val.red, rgba_val.green, rgba_val.blue)
+
+    bg = _lookup("theme_bg_color")
+    base = _lookup("theme_base_color")
+    fg = _lookup("theme_fg_color")
+    sel = _lookup("theme_selected_bg_color")
+
+    # Determine dark vs light from bg luminance.
+    if bg is not None:
+        is_dark = _relative_luminance(bg) < 0.5
+    elif fg is not None:
+        # Fall back: use fg luminance (fg is opposite of bg).
+        is_dark = _relative_luminance(fg) > 0.5
+    else:
+        is_dark = True  # no information, default to dark
+
+    fallback = DARK if is_dark else LIGHT
+
+    window = bg if bg is not None else fallback.window
+    text = fg if fg is not None else fallback.text
+
+    # Card: use theme_base_color; if within ~4% lightness of window, shade
+    # 6% towards the foreground so cards stay visible.
+    if base is not None:
+        card = base
+        if abs(_lightness(card) - _lightness(window)) < 0.04:
+            card = _mix_towards(card, text, 0.06)
+    else:
+        card = fallback.card
+
+    # Derived colours from fg.
+    if fg is not None:
+        muted = _mix_towards(window, fg, 0.65)
+        border = _mix_towards(window, fg, 0.12)
+        gauge_track = _mix_towards(window, fg, 0.14)
+    else:
+        muted = fallback.muted
+        border = fallback.border
+        gauge_track = fallback.gauge_track
+
+    selected_bg = sel if sel is not None else fallback.selected_bg
+
+    return Palette(
+        window=window,
+        card=card,
+        border=border,
+        text=text,
+        muted=muted,
+        selected_bg=selected_bg,
+        cpu_start=fallback.cpu_start,
+        cpu_end=fallback.cpu_end,
+        ram_start=fallback.ram_start,
+        gpu_start=fallback.gpu_start,
+        gpu_end=fallback.gpu_end,
+        memory_start=fallback.memory_start,
+        memory_end=fallback.memory_end,
+        gpu_memory_start=fallback.gpu_memory_start,
+        gpu_memory_end=fallback.gpu_memory_end,
+        cpu_temp=fallback.cpu_temp,
+        gpu_temp=fallback.gpu_temp,
+        threshold=fallback.threshold,
+        disk_read=fallback.disk_read,
+        disk_write=fallback.disk_write,
+        net_download=fallback.net_download,
+        net_upload=fallback.net_upload,
+        gauge_track=gauge_track,
+        end_button=fallback.end_button,
+    )
 
 
 def gradient(pal: Palette, kind: str) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
@@ -141,6 +249,7 @@ def css(pal: Palette) -> str:
     cool = _css_colour(pal.cpu_start)
     warm = _css_colour(pal.cpu_temp)
     hot = _css_colour(pal.threshold)
+    sel = _css_colour(pal.selected_bg)
     return f"""\
 window, .background {{
     background-color: {w};
@@ -166,9 +275,9 @@ button:hover, button:active, button:focus {{
 }}
 button.tab-selected, button.tab-selected:hover,
 button.tab-selected:active, button.tab-selected:focus {{
-    background-color: {rgba(pal.gpu_start, 0.40)};
-    color: {gpu_blue};
-    border: 1px solid {gpu_blue};
+    background-color: {rgba(pal.selected_bg, 0.40)};
+    color: {sel};
+    border: 1px solid {sel};
 }}
 entry, combobox entry {{
     background-color: {c};
@@ -222,8 +331,8 @@ combobox button {{
     color: {t};
 }}
 .tab-selected {{
-    background-color: {rgba(pal.gpu_start, 0.40)};
-    color: {gpu_blue};
+    background-color: {rgba(pal.selected_bg, 0.40)};
+    color: {sel};
     border-radius: 6px;
     padding: 4px 10px;
 }}

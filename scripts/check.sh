@@ -28,6 +28,11 @@ if [ -f tests/ui_live.py ]; then
     echo "OK: Live UI test (real samplers, real window)"
 fi
 
+if [ -f tests/ui_themes.py ]; then
+    timeout 600 python3 tests/ui_themes.py
+    echo "OK: UI theme tests (screenshots in build/screenshots/)"
+fi
+
 if grep -rIl --exclude-dir=.git -e systemd -e systemctl spaced_monitor bin packaging 2>/dev/null; then
     echo "FAIL: systemd reference above (Spaced Linux has no systemd)"; exit 1
 fi
