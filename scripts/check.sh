@@ -6,10 +6,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/screenshots
 
-# Only sources: bin/ holds extensionless scripts, and compiling them leaves bin/__pycache__/*.pyc behind.
-mapfile -t py < <(find spaced_monitor tests bin scripts -name __pycache__ -prune -o -type f \( -name '*.py' -o -path 'bin/*' \) -print | sort)
+mapfile -t py < <(find spaced_monitor tests bin scripts -type f \( -name '*.py' -o -path 'bin/*' \) -not -path '*/__pycache__/*' | sort)
 python3 -m py_compile "${py[@]}"
-find spaced_monitor tests bin scripts -name __pycache__ -prune -exec rm -rf {} +
+find spaced_monitor tests bin -name __pycache__ -prune -exec rm -rf {} +
 echo "OK: ${#py[@]} Python files compile"
 
 mapfile -t sh < <(find scripts -name '*.sh' | sort)
@@ -22,6 +21,11 @@ echo "OK: unit tests"
 if [ -f tests/ui_smoke.py ]; then
     timeout 180 xvfb-run -a -s "-screen 0 1600x1000x24" python3 tests/ui_smoke.py
     echo "OK: UI smoke test (screenshots in build/screenshots/)"
+fi
+
+if [ -f tests/ui_live.py ]; then
+    timeout 180 xvfb-run -a -s "-screen 0 1600x1000x24" python3 tests/ui_live.py
+    echo "OK: Live UI test (real samplers, real window)"
 fi
 
 if grep -rIl --exclude-dir=.git -e systemd -e systemctl spaced_monitor bin packaging 2>/dev/null; then

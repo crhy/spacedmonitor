@@ -1,0 +1,360 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Per-app process usage and safe ending of an app."""
+
+from __future__ import annotations
+
+import os
+import pwd
+import signal
+import subprocess
+import time
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Sequence
+
+
+@dataclass
+class ProcUsage:
+    """One process, as shown under an expanded app row."""
+    pid: int
+    name: str
+    cpu_percent: float
+    rss: int
+
+
+@dataclass
+class AppUsage:
+    """One app: grouped processes and their combined usage."""
+    name: str
+    pids: list[int]
+    cpu_percent: float
+    rss: int
+    gpu_percent: float
+    gpu_mem: int
+    disk_bps: float
+    user: str
+    icon: str
+    children: list = field(default_factory=list)
+
+
+# Known process names that need a special label (not capitalised or renamed).
+_NAME_MAP = {
+    "llama-server": "llama-server",
+    "Xorg": "System display (Xorg)",
+    "python3": "Python",
+}
+
+
+def display_name(name: str) -> str:
+    """Turn a raw process name into a nicer label."""
+    if name in _NAME_MAP:
+        return _NAME_MAP[name]
+    base = name
+    for suffix in (".bin", "-bin", "-wrapped"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    if base:
+        base = base[0].upper() + base[1:]
+    return base
+
+
+def _current_user() -> str:
+    """Current user's login name, for the 'mine' scope."""
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return ""
+
+
+_ICON_FALLBACK = "application-x-executable"
+_ICON_DIRS = (
+    "/usr/share/applications",
+    os.path.expanduser("~/.local/share/applications"),
+    "/var/lib/flatpak/exports/share/applications",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
+)
+_icon_cache: dict[str, str] = {}
+
+
+def _read_desktop(path: str) -> dict:
+    """Parse the Exec, StartupWMClass and Icon keys from a .desktop file."""
+    out = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                for key in ("Exec", "StartupWMClass", "Icon"):
+                    if line.startswith(f"{key}="):
+                        out[key] = line[len(key) + 1:].strip()
+    except OSError:
+        return out
+    return out
+
+
+def icon_for(name: str, dirs: Sequence[str] = _ICON_DIRS) -> str:
+    """Find a matching .desktop Icon for a process name; cached."""
+    if name in _icon_cache:
+        return _icon_cache[name]
+    target = name.lower()
+    for d in dirs:
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            continue
+        for fn in entries:
+            if not fn.endswith(".desktop"):
+                continue
+            stem = fn[: -len(".desktop")].lower()
+            keys = _read_desktop(os.path.join(d, fn))
+            exec_base = ""
+            if "Exec" in keys:
+                exec_base = os.path.basename(keys["Exec"].split()[0]).lower()
+            wm = keys.get("StartupWMClass", "").lower()
+            if stem == target or exec_base == target or wm == target:
+                icon = keys.get("Icon") or _ICON_FALLBACK
+                _icon_cache[name] = icon
+                return icon
+    _icon_cache[name] = _ICON_FALLBACK
+    return _ICON_FALLBACK
+
+
+def _default_run(cmd: list, timeout: float = 2.0) -> str:
+    """Run a command and return stdout (default GPU probe runner)."""
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    return res.stdout
+
+
+def _gpu_mem_by_pid(run: Callable = None) -> dict[int, int]:
+    """Per-pid GPU memory in bytes from nvidia-smi compute-apps (MiB -> bytes)."""
+    if run is None:
+        run = _default_run
+    cmd = ["nvidia-smi", "--query-compute-apps=pid,used_memory",
+           "--format=csv,noheader,nounits"]
+    try:
+        out = run(cmd, timeout=2.0)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    result: dict[int, int] = {}
+    for line in (out or "").splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+            mib = float(parts[1])
+        except ValueError:
+            continue
+        result[pid] = int(mib * 1024 * 1024)
+    return result
+
+
+def _gpu_sm_by_pid(run: Callable = None) -> dict[int, float]:
+    """Per-pid GPU SM utilisation percent from nvidia-smi pmon ('-' -> 0)."""
+    if run is None:
+        run = _default_run
+    cmd = ["nvidia-smi", "pmon", "-c", "1", "-s", "u"]
+    try:
+        out = run(cmd, timeout=2.0)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    result: dict[int, float] = {}
+    for line in (out or "").splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        cols = line.split()
+        if len(cols) < 4:
+            continue
+        try:
+            pid = int(cols[1])
+        except ValueError:
+            continue
+        sm = 0.0 if cols[3] == "-" else float(cols[3])
+        result[pid] = sm
+    return result
+
+
+class ProcessSampler:
+    """Group processes into apps and sample their usage over time."""
+
+    def __init__(self, ps=None, clock: Callable[[], float] = time.monotonic,
+                 gpu_run: Callable = None) -> None:
+        """Keep Process objects and io counters between samples for deltas."""
+        if ps is None:
+            import psutil
+            ps = psutil
+        self._ps = ps
+        self._clock = clock
+        self._gpu_run = gpu_run
+        self._procs: dict[int, object] = {}
+        self._io: dict[int, tuple[int, int]] = {}
+        self._prev_t: Optional[float] = None
+
+    def _has_exe(self, proc) -> bool:
+        """True when a process exposes an executable path."""
+        try:
+            return bool(proc.exe())
+        except self._ps.NoSuchProcess:
+            return False
+        except self._ps.AccessDenied:
+            return True
+
+    def _is_kernel_thread(self, proc) -> bool:
+        """Kernel threads (children of kthreadd, pid 2) are left out."""
+        if proc.pid in (1, 2):
+            return True
+        return proc.ppid() == 2
+
+    def _io_delta(self, proc, pid: int) -> int:
+        """Read+write bytes since the last sample; denied or missing -> 0."""
+        try:
+            cur = proc.io_counters()
+        except (AttributeError, self._ps.AccessDenied, self._ps.NoSuchProcess):
+            return 0
+        read_b, write_b = cur.read_bytes, cur.write_bytes
+        prev = self._io.get(pid)
+        self._io[pid] = (read_b, write_b)
+        if prev is None:
+            return 0
+        return max(0, (read_b - prev[0]) + (write_b - prev[1]))
+
+    def sample(self) -> list[AppUsage]:
+        """Return AppUsage rows sorted by cpu_percent descending."""
+        now = self._clock()
+        dt = (now - self._prev_t) if self._prev_t is not None else 0.0
+        self._prev_t = now
+        gpu_mem = _gpu_mem_by_pid(self._gpu_run)
+        gpu_sm = _gpu_sm_by_pid(self._gpu_run)
+        cpu_n = self._ps.cpu_count() or 1
+        groups: dict[tuple[str, str], dict] = {}
+        live: set[int] = set()
+        for pid in self._ps.pids():
+            proc = self._procs.get(pid)
+            if proc is None:
+                try:
+                    proc = self._ps.Process(pid)
+                except self._ps.NoSuchProcess:
+                    continue
+                self._procs[pid] = proc
+            try:
+                if self._is_kernel_thread(proc):
+                    continue
+                name = proc.name()
+                user = proc.username()
+                cpu = proc.cpu_percent(interval=None)
+                rss = proc.memory_info().rss
+            except self._ps.NoSuchProcess:
+                self._procs.pop(pid, None)
+                continue
+            except (self._ps.AccessDenied, self._ps.ZombieProcess):
+                continue
+            live.add(pid)
+            disk = self._io_delta(proc, pid)
+            g = groups.setdefault((name, user), {
+                "pids": [], "cpu": 0.0, "rss": 0, "gpu_percent": 0.0,
+                "gpu_mem": 0, "disk": 0, "children": [],
+            })
+            g["pids"].append(pid)
+            g["children"].append(ProcUsage(pid, name, cpu, rss))
+            g["cpu"] += cpu
+            g["rss"] += rss
+            g["gpu_percent"] += gpu_sm.get(pid, 0.0)
+            g["gpu_mem"] += gpu_mem.get(pid, 0)
+            g["disk"] += disk
+        for pid in list(self._procs):
+            if pid not in live:
+                self._procs.pop(pid, None)
+                self._io.pop(pid, None)
+        rows = []
+        for (name, user), g in groups.items():
+            rows.append(AppUsage(
+                name=name, pids=g["pids"],
+                cpu_percent=g["cpu"] / cpu_n,
+                rss=g["rss"], gpu_percent=g["gpu_percent"], gpu_mem=g["gpu_mem"],
+                disk_bps=(g["disk"] / dt) if dt > 0 else 0.0,
+                user=user, icon=icon_for(name),
+                children=sorted(g["children"],
+                                key=lambda p: p.cpu_percent, reverse=True),
+            ))
+        rows.sort(key=lambda a: a.cpu_percent, reverse=True)
+        return rows
+
+
+def filter_apps(apps: Sequence[AppUsage], text: str = "", scope: str = "all",
+                me: Optional[str] = None) -> list[AppUsage]:
+    """Keep apps whose display name matches text; scope 'mine' limits to me."""
+    if me is None:
+        me = _current_user()
+    low = text.lower()
+    out = []
+    for a in apps:
+        if scope == "mine" and a.user != me:
+            continue
+        if low and low not in display_name(a.name).lower():
+            continue
+        out.append(a)
+    return out
+
+
+def end_app(app: AppUsage, force: bool = False, kill: Callable = os.kill,
+            me: Optional[int] = None, uid: Optional[int] = None) -> tuple[bool, str]:
+    """End an app's processes; refuse protected pids and other users' apps."""
+    if me is None:
+        me = os.getpid()
+    if uid is None:
+        uid = os.getuid()
+    name = display_name(app.name)
+    for pid in app.pids:
+        if pid in (1, 2) or pid == me:
+            return (False, f"refusing to end {name}: protected process {pid}")
+    try:
+        owner = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        owner = None
+    if uid != 0 and app.user and owner is not None and app.user != owner:
+        return (False, f"{name} belongs to {app.user}: ending it needs an administrator.")
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    killed = 0
+    for pid in app.pids:
+        try:
+            kill(pid, sig)
+            killed += 1
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            return (False, f"{name} belongs to {app.user}: ending it needs an administrator.")
+    if killed == 0:
+        return (True, f"{name} was already gone")
+    return (True, f"ended {name} ({killed} process(es))")
+
+
+def main() -> None:
+    """Print the top apps using this machine."""
+    sampler = ProcessSampler()
+    sampler.sample()
+    time.sleep(1.0)
+    apps = sampler.sample()
+    print(f"{'APP':<22} {'CPU%':>6} {'MEM':>8} {'GPU%':>5} {'GPUmem':>8} {'DISK':>8} USER")
+    for a in apps[:8]:
+        print(f"{display_name(a.name):<22} {a.cpu_percent:>6.1f} "
+              f"{_fmt_bytes(a.rss):>8} {a.gpu_percent:>5.0f} {_fmt_bytes(a.gpu_mem):>8} "
+              f"{_fmt_bps(a.disk_bps):>8} {a.user}")
+
+
+def _fmt_bytes(value: int) -> str:
+    """Human-readable byte size."""
+    size = float(value)
+    for unit in ("B", "K", "M", "G", "T"):
+        if size < 1024:
+            return f"{size:.0f}{unit}"
+        size /= 1024
+    return f"{size:.1f}P"
+
+
+def _fmt_bps(value: float) -> str:
+    """Human-readable bytes-per-second rate."""
+    if value <= 0:
+        return "-"
+    return _fmt_bytes(int(value)) + "/s"
+
+
+if __name__ == "__main__":
+    main()
