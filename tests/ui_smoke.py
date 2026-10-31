@@ -22,6 +22,7 @@ from spaced_monitor.collect import (
 from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
                                   TemperatureCard, DiskCard, NetworkCard)
 from spaced_monitor.apptable import AppTable
+from spaced_monitor.app import FooterItem
 from spaced_monitor.pages import HardwarePage, ProcessesPage
 from spaced_monitor.processes import AppUsage, ProcUsage
 
@@ -106,13 +107,12 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
     logo.connect("draw", _draw_logo)
     bar.pack_start(logo, False, False, 0)
     bar.pack_start(Gtk.Label(label="Spaced Monitor"), False, False, 0)
-    # Tabs: linked toggle buttons
-    tabs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+    # Tabs: the same plain buttons the app uses, one marked selected
+    tabs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
     for tab_name in ("Overview", "Processes", "Hardware"):
-        btn = Gtk.ToggleButton(label=tab_name)
-        btn.get_style_context().add_class("linked")
+        btn = Gtk.Button(label=tab_name)
+        btn.set_size_request(80, 28)
         if tab_name == "Overview":
-            btn.set_active(True)
             btn.get_style_context().add_class("tab-selected")
         tabs.pack_start(btn, False, False, 0)
     bar.pack_start(tabs, True, False, 0)
@@ -167,7 +167,7 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
     ]
     table = AppTable(pal, rows=5)
     table.set_apps(apps)
-    root.pack_start(table, True, True, 0)
+    root.pack_start(table, False, True, 0)
     # Footer
     footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
     footer.get_style_context().add_class("footer")
@@ -176,15 +176,19 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
     uptime_h = int(snap.uptime_s) // 3600
     uptime_m = (int(snap.uptime_s) % 3600) // 60
     footer_vals = [
-        ("Fans", f"{fans_rpm:,} RPM" if fans_rpm else "—"),
-        ("CPU power", f"{int(round(snap.cpu_power_w))} W" if snap.cpu_power_w else "—"),
-        ("GPU power", f"{int(round(gpu_pw))} W" if gpu_pw else "—"),
-        ("Uptime", f"{uptime_h}h {uptime_m}m"),
+        ("Fans", f"{fans_rpm:,} RPM" if fans_rpm else "\u2027",
+         "weather-windy-symbolic"),
+        ("CPU power", f"{int(round(snap.cpu_power_w))} W"
+         if snap.cpu_power_w else "\u2027", "system-run-symbolic"),
+        ("GPU power", f"{int(round(gpu_pw))} W" if gpu_pw else "\u2027",
+         "battery-full-charged-symbolic"),
+        ("Uptime", f"{uptime_h}h {uptime_m}m", "alarm-symbolic"),
     ]
-    for label, val in footer_vals:
-        item = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        item.pack_start(Gtk.Label(label=label), False, False, 0)
-        item.pack_start(Gtk.Label(label=val), False, False, 0)
+    for index, (label, val, icon) in enumerate(footer_vals):
+        item = FooterItem(label, icon)
+        if index:
+            item.get_style_context().add_class("footer-sep")
+        item.set_value(val)
         footer.pack_start(item, True, True, 0)
     root.pack_start(footer, False, True, 0)
     return root

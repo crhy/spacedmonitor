@@ -134,6 +134,7 @@ def css(pal: Palette) -> str:
     t = _css_colour(pal.text)
     m = _css_colour(pal.muted)
     gpu_tint = rgba(pal.gpu_start, 0.25)
+    gpu_blue = _css_colour(pal.gpu_end)
     red = _css_colour(pal.end_button)
     cool = _css_colour(pal.cpu_start)
     warm = _css_colour(pal.cpu_temp)
@@ -147,6 +148,47 @@ window, .background {{
     background-color: {c};
     border-bottom: 1px solid {b};
     padding: 6px 10px;
+}}
+button {{
+    background-image: none;
+    background-color: {c};
+    color: {t};
+    border: 1px solid {b};
+    border-radius: 6px;
+    padding: 4px 10px;
+    min-height: 0;
+}}
+button:hover, button:active, button:focus {{
+    background-color: {gpu_tint};
+    color: {t};
+}}
+button.tab-selected, button.tab-selected:hover,
+button.tab-selected:active, button.tab-selected:focus {{
+    background-color: {gpu_tint};
+    color: {gpu_blue};
+    border: 1px solid {b};
+}}
+entry, combobox entry {{
+    background-color: {c};
+    color: {t};
+    border: 1px solid {b};
+    border-radius: 6px;
+    padding: 4px 8px;
+}}
+entry.placeholder, entry label.placeholder, entry placeholder {{
+    color: {m};
+}}
+combobox {{
+    background-color: {c};
+    border: 1px solid {b};
+    border-radius: 6px;
+    padding: 0;
+}}
+combobox button {{
+    background-image: none;
+    background-color: {c};
+    color: {t};
+    border: none;
 }}
 .card {{
     background-color: {c};
@@ -175,6 +217,7 @@ window, .background {{
 }}
 .tab-selected {{
     background-color: {gpu_tint};
+    color: {gpu_blue};
     border-radius: 6px;
     padding: 4px 10px;
 }}
@@ -190,6 +233,19 @@ window, .background {{
 }}
 .page {{
     padding: 10px;
+}}
+.footer {{
+    background-color: {c};
+    border: 1px solid {b};
+    border-radius: 12px;
+    padding: 8px 6px;
+    color: {t};
+}}
+.footer-item {{
+    padding: 2px 12px;
+}}
+.footer-sep {{
+    border-left: 1px solid {b};
 }}
 .col-header {{
     font-weight: bold;

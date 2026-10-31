@@ -256,22 +256,81 @@ def _polyline(cr, pts) -> None:
             cr.line_to(x, y)
 
 
-def _fill_under(cr, pts, y_bottom, colour) -> None:
-    """Fill the area under a line, fading from 35% to 0% alpha downward."""
+def _interp_y(pts, x: float) -> float:
+    """Return the y of a polyline at x (flat beyond the ends)."""
+    if not pts:
+        return 0.0
+    if x <= pts[0][0]:
+        return pts[0][1]
+    if x >= pts[-1][0]:
+        return pts[-1][1]
+    for i in range(1, len(pts)):
+        xa, ya = pts[i - 1]
+        xb, yb = pts[i]
+        if xa <= x <= xb:
+            span = xb - xa
+            if span <= 0.0:
+                return yb
+            return ya + (yb - ya) * (x - xa) / span
+    return pts[-1][1]
+
+
+def _envelope(a, b):
+    """Merge two polylines into their upper (smallest y) envelope."""
+    if not a:
+        return list(b)
+    if not b:
+        return list(a)
+    xs = sorted({px for px, _ in a} | {px for px, _ in b})
+    return [(x, min(_interp_y(a, x), _interp_y(b, x))) for x in xs]
+
+
+def _fill_under(cr, pts, y_bottom, colour, envelope=None) -> None:
+    """Fill the area under a line in its own colour, fading to transparent.
+
+    `envelope` is the upper edge of the areas already painted by lower
+    lines; the fill is clipped to the area above it so two translucent
+    areas never stack into a muddy grey.
+    """
     if len(pts) < 1:
         return
+    top = min(y for _, y in pts)
     cr.save()
+    if envelope:
+        cr.move_to(envelope[0][0], 0.0)
+        for ex, ey in envelope:
+            cr.line_to(ex, ey)
+        cr.line_to(envelope[-1][0], 0.0)
+        cr.close_path()
+        cr.clip()
+        cr.new_sub_path()
     cr.move_to(pts[0][0], y_bottom)
     for px, py in pts:
         cr.line_to(px, py)
     cr.line_to(pts[-1][0], y_bottom)
     cr.close_path()
-    grad = cairo.LinearGradient(0, pts[0][1], 0, y_bottom)
+    grad = cairo.LinearGradient(0, top, 0, max(y_bottom, top + 1.0))
     grad.add_color_stop_rgba(0.0, *colour, 0.35)
     grad.add_color_stop_rgba(1.0, *colour, 0.0)
     cr.set_source(grad)
     cr.fill()
     cr.restore()
+
+
+def _paint_areas(cr, plotted, y_bottom) -> None:
+    """Fill every series area, lowest line first, each clipped to its own band.
+
+    Painting the lowest line first and clipping the higher lines to the
+    area above the envelope already painted keeps each area in its own
+    colour instead of stacking translucent tints into grey.
+    """
+    order = sorted((i for i in range(len(plotted)) if plotted[i][1]),
+                   key=lambda i: -max(y for _, y in plotted[i][1]))
+    envelope = None
+    for i in order:
+        colour, pts = plotted[i]
+        _fill_under(cr, pts, y_bottom, colour, envelope)
+        envelope = _envelope(envelope, pts)
 
 
 def _text_centered(cr, cx, cy, text) -> None:
@@ -313,8 +372,7 @@ def draw_line_graph(cr, w, h, pal, series, y_min, y_max, threshold=None,
         _text_centered(cr, x, y1 + 9, time.strftime("%H:%M", time.localtime(now - age)))
     plotted = [(c, _series_points(v, x0, x1, y0, y1, y_min, y_max, seconds))
                for c, v in (series or [])]
-    for colour, pts in plotted:
-        _fill_under(cr, pts, y1, colour)
+    _paint_areas(cr, plotted, y1)
     for colour, pts in plotted:
         cr.set_line_width(2.0)
         cr.set_source_rgb(*colour)
@@ -402,8 +460,7 @@ def draw_sparkline(cr, w, h, pal, series) -> None:
                 maxv = v
     x0, x1, y0, y1 = 1.0, w - 1.0, 1.0, h - 1.0
     plotted = [(c, _spark_points(v, x0, x1, y0, y1, maxv)) for c, v in series]
-    for colour, pts in plotted:
-        _fill_under(cr, pts, y1, colour)
+    _paint_areas(cr, plotted, y1)
     for colour, pts in plotted:
         cr.set_line_width(1.5)
         cr.set_source_rgb(*colour)

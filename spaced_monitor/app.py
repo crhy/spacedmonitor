@@ -66,15 +66,21 @@ def _title(text: str) -> Gtk.Label:
 
 
 class FooterItem(Gtk.Box):
-    """One footer cell: muted label above a value."""
+    """One footer cell: an icon beside a muted label above a value."""
 
-    def __init__(self, label_text: str) -> None:
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    def __init__(self, label_text: str, icon: str = "") -> None:
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.get_style_context().add_class("footer-item")
+        if icon:
+            img = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.SMALL_TOOLBAR)
+            img.set_valign(Gtk.Align.CENTER)
+            self.pack_start(img, False, False, 0)
+        col = _vbox(spacing=2)
         self._m = _muted(label_text)
         self._v = _lbl(fmt.EMDASH, "value")
-        self.pack_start(self._m, expand=False, fill=False, padding=0)
-        self.pack_start(self._v, expand=False, fill=False, padding=0)
+        col.pack_start(self._m, expand=False, fill=False, padding=0)
+        col.pack_start(self._v, expand=False, fill=False, padding=0)
+        self.pack_start(col, expand=False, fill=False, padding=0)
 
     def set_value(self, text: str) -> None:
         """Update the value text."""
@@ -165,19 +171,23 @@ class MonitorWindow(Gtk.Window):
         graphs.pack_start(self._net_card, expand=False, fill=True, padding=0)
         col.pack_start(graphs, expand=True, fill=True, padding=0)
         self._app_table = AppTable(self._pal, rows=5)
-        col.pack_start(self._app_table, expand=True, fill=True, padding=0)
+        col.pack_start(self._app_table, expand=False, fill=True, padding=0)
         return col
 
     def _build_footer(self) -> Gtk.Box:
-        """Footer row with four items."""
+        """Footer strip: four icon+text items split by thin border lines."""
         row = _hbox(spacing=0)
         row.get_style_context().add_class("footer")
-        self._f_fans = FooterItem("Fans")
-        self._f_cpu_pow = FooterItem("CPU power")
-        self._f_gpu_pow = FooterItem("GPU power")
-        self._f_uptime = FooterItem("Uptime")
-        for item in (self._f_fans, self._f_cpu_pow,
-                     self._f_gpu_pow, self._f_uptime):
+        self._f_fans = FooterItem("Fans", "weather-windy-symbolic")
+        self._f_cpu_pow = FooterItem("CPU power", "system-run-symbolic")
+        self._f_gpu_pow = FooterItem("GPU power",
+                                     "battery-full-charged-symbolic")
+        self._f_uptime = FooterItem("Uptime", "alarm-symbolic")
+        items = (self._f_fans, self._f_cpu_pow, self._f_gpu_pow,
+                 self._f_uptime)
+        for index, item in enumerate(items):
+            if index:
+                item.get_style_context().add_class("footer-sep")
             row.pack_start(item, expand=True, fill=True, padding=0)
         return row
 
