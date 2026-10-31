@@ -8,7 +8,7 @@ here = os.path.dirname(os.path.realpath(__file__))
 # from a checkout: the repo root.
 for root in ("/usr/lib/spaced-monitor",
              os.path.join(here, os.pardir, "lib", "spaced-monitor"),
-             os.path.dirname(os.path.dirname(here))):
+             os.path.dirname(here)):
     if os.path.isdir(os.path.join(root, "spaced_monitor")):
         sys.path.insert(0, root)
         break
