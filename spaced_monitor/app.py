@@ -170,7 +170,7 @@ class MonitorWindow(Gtk.Window):
         graphs.pack_start(self._disk_card, expand=False, fill=True, padding=0)
         graphs.pack_start(self._net_card, expand=False, fill=True, padding=0)
         col.pack_start(graphs, expand=True, fill=True, padding=0)
-        self._app_table = AppTable(self._pal, rows=5)
+        self._app_table = AppTable(self._pal)
         col.pack_start(self._app_table, expand=False, fill=True, padding=0)
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)

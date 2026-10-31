@@ -165,7 +165,7 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
         AppUsage("steam", [50], 2.0, int(0.5 * 1024**3), 5.0,
                  int(1.0 * 1024**3), 32 * 1024**2, "rhy", "steam"),
     ]
-    table = AppTable(pal, rows=5)
+    table = AppTable(pal)
     table.set_apps(apps)
     root.pack_start(table, False, True, 0)
     # Footer

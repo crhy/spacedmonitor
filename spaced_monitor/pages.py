@@ -9,9 +9,9 @@ from gi.repository import Gtk
 
 from spaced_monitor import format as fmt
 from spaced_monitor import theme as theme_mod
-from spaced_monitor.apptable import (end_outcome, end_question, meter_fraction)
 from spaced_monitor.collect import Filesystem, GpuExtra, Interface, Temperature
-from spaced_monitor.processes import AppUsage, ProcUsage, display_name, end_app, filter_apps
+from spaced_monitor.processes import (AppUsage, ProcUsage, display_name,
+                                      end_immediate, filter_apps)
 from spaced_monitor.widgets import Gauge, Meter, StackedBar
 
 # Columns the Processes page can sort by, in header order.
@@ -45,6 +45,17 @@ def count_summary(apps: list) -> str:
     """The left header cell: '128 apps · 412 processes'."""
     processes = sum(len(a.pids) for a in apps)
     return f"{len(apps)} apps \u00b7 {processes} processes"
+
+
+def meter_fraction(value: float, maximum: float,
+                   cap: float | None = None) -> float:
+    """Fraction for a mini bar: value/max, clamped to [0, 1] and to cap."""
+    if not maximum:
+        return 0.0
+    frac = value / maximum
+    if cap is not None:
+        frac = min(frac, cap)
+    return max(0.0, min(1.0, frac))
 
 
 def child_rows(app: AppUsage) -> list:
@@ -138,8 +149,6 @@ def gpu_extra_line(extra: GpuExtra | None) -> str:
 _COLUMN_MAX = {"cpu": 100.0, "ram": 16.0 * 1024 ** 3, "gpu": 100.0, "disk": 100e6}
 _COLUMN_TITLES = {"app": "App", "cpu": "CPU", "ram": "RAM", "gpu": "GPU",
                   "disk": "Disk"}
-_END_ID = 1
-_FORCE_ID = 2
 
 
 def system_only(apps: list) -> list:
@@ -266,6 +275,7 @@ class ProcessesPage(Gtk.Box):
         self._grid.set_column_spacing(8)
         self._scrolled.add(self._grid)
         vbox.pack_start(self._scrolled, True, True, 0)
+        self._vbox = vbox
         self.pack_start(vbox, True, True, 0)
 
     def _repaint_headers(self) -> None:
@@ -375,46 +385,34 @@ class ProcessesPage(Gtk.Box):
         self._refresh()
 
     def _on_end(self, _btn, app: AppUsage) -> None:
-        """Open the end confirmation dialog for this row's app."""
-        self._confirm_end(app)
+        """End the app immediately: SIGTERM then SIGKILL after 2 s."""
+        from gi.repository import GLib
+        ok, msg = end_immediate(app, timeout_add=GLib.timeout_add)
+        if not ok:
+            self._show_end_msg(msg)
 
-    def _confirm_end(self, app: AppUsage) -> None:
-        """Show a modal confirmation and end the app on the End button."""
-        question, detail = end_question(app)
-        dialog = Gtk.MessageDialog(
-            transient_for=self.get_toplevel(), modal=True,
-            message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.NONE,
-            text=f"{question}\n{detail}")
-        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        dialog.add_button("End", _END_ID)
-        dialog.set_default_response(Gtk.ResponseType.CANCEL)
-        response = dialog.run()
-        dialog.destroy()
-        if response == _END_ID:
-            self._run_end(app, force=False)
+    def _show_end_msg(self, text: str) -> None:
+        """Show a refusal message inline for 4 seconds."""
+        from gi.repository import GLib
+        if not hasattr(self, '_end_msg') or self._end_msg is None:
+            bar = Gtk.Label(label=text)
+            bar.get_style_context().add_class("muted")
+            bar.set_xalign(0.0)
+            self._end_msg = bar
+            self._vbox.pack_start(
+                bar, False, False, 0)
+        else:
+            self._end_msg.set_text(text)
+        if hasattr(self, '_end_msg_id') and self._end_msg_id:
+            GLib.timeout_cancel(self._end_msg_id)
+        self._end_msg_id = GLib.timeout_add(4000, self._clear_end_msg)
 
-    def _run_end(self, app: AppUsage, force: bool) -> None:
-        """End the app; on refusal offer a force end (never after a force)."""
-        ok, msg = end_app(app, force=force)
-        if ok:
-            return
-        _msg, offer_force = end_outcome(ok, msg, force)
-        if offer_force:
-            self._offer_force(app, msg)
-
-    def _offer_force(self, app: AppUsage, msg: str) -> None:
-        """Show the refusal and offer a force end as a secondary action."""
-        dialog = Gtk.MessageDialog(
-            transient_for=self.get_toplevel(), modal=True,
-            message_type=Gtk.MessageType.WARNING, buttons=Gtk.ButtonsType.NONE,
-            text=msg)
-        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Force end", _FORCE_ID)
-        dialog.set_default_response(Gtk.ResponseType.CANCEL)
-        response = dialog.run()
-        dialog.destroy()
-        if response == _FORCE_ID:
-            end_app(app, force=True)
+    def _clear_end_msg(self) -> bool:
+        """Clear the inline end message; returns False so it does not repeat."""
+        if hasattr(self, '_end_msg') and self._end_msg:
+            self._end_msg.set_text("")
+        self._end_msg_id = 0
+        return False
 
 
 # --- Hardware page ----------------------------------------------------------

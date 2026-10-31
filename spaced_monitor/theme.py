@@ -230,6 +230,29 @@ combobox button {{
     padding: 2px;
     border: none;
 }}
+.end-button:hover, .end-button:active, .end-button:focus,
+.end-button:backdrop, .end-button:hover:active {{
+    background-color: #dc2626;
+    background-image: none;
+    color: #ffffff;
+    border: none;
+}}
+button.end-button, button.end-button:hover, button.end-button:active,
+button.end-button:focus, button.end-button:backdrop {{
+    background-color: {red};
+    background-image: none;
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    min-width: 20px;
+    min-height: 20px;
+    padding: 2px;
+}}
+button.end-button:hover, button.end-button:active, button.end-button:focus {{
+    background-color: #dc2626;
+    background-image: none;
+    color: #ffffff;
+}}
 .page {{
     padding: 10px;
 }}

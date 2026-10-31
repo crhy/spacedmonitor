@@ -326,6 +326,60 @@ def end_app(app: AppUsage, force: bool = False, kill: Callable = os.kill,
     return (True, f"ended {name} ({killed} process(es))")
 
 
+def end_immediate(app: AppUsage, kill: Callable = os.kill,
+                  timeout_add: Callable | None = None,
+                  me: Optional[int] = None, uid: Optional[int] = None
+                  ) -> tuple[bool, str]:
+    """End an app now: SIGTERM every pid, SIGKILL survivors after 2 s.
+
+    timeout_add is the GLib.timeout_add callable (or a fake in tests).
+    Returns (False, reason) when the app is protected or belongs to another user.
+    """
+    if me is None:
+        me = os.getpid()
+    if uid is None:
+        uid = os.getuid()
+    name = display_name(app.name)
+    for pid in app.pids:
+        if pid in (1, 2) or pid == me:
+            return (False, f"refusing to end {name}: protected process {pid}")
+    try:
+        owner = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        owner = None
+    if uid != 0 and app.user and owner is not None and app.user != owner:
+        return (False, f"{name} belongs to {app.user}: ending it needs an administrator.")
+    killed = 0
+    for pid in app.pids:
+        try:
+            kill(pid, signal.SIGTERM)
+            killed += 1
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            return (False, f"{name} belongs to {app.user}: ending it needs an administrator.")
+    if killed == 0:
+        return (True, f"{name} was already gone")
+    if timeout_add is not None:
+        timeout_add(2000, _sigkill_survivors, list(app.pids), kill)
+    return (True, f"ended {name} ({killed} process(es))")
+
+
+def _sigkill_survivors(pids: list, kill: Callable) -> bool:
+    """SIGKILL any pid still alive; returns False so the timeout does not repeat."""
+    import os as _os
+    for pid in pids:
+        try:
+            _os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            continue
+        try:
+            kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    return False
+
+
 def main() -> None:
     """Print the top apps using this machine."""
     sampler = ProcessSampler()
