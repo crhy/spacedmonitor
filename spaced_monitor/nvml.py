@@ -85,6 +85,15 @@ class _Memory(ctypes.Structure):
     ]
 
 
+class _MemoryV1(ctypes.Structure):
+    """nvmlMemory_t (v1): total, free, used in bytes (no reserved field)."""
+    _fields_ = [
+        ("total", ctypes.c_ulonglong),
+        ("free", ctypes.c_ulonglong),
+        ("used", ctypes.c_ulonglong),
+    ]
+
+
 class _ProcessInfo(ctypes.Structure):
     """nvmlProcessInfo_v3_t: pid, usedMemory, processName, then extras."""
     _fields_ = [
@@ -202,13 +211,21 @@ def memory_info(index: int = 0) -> tuple[Optional[int], Optional[int]]:
     dev = _device_handle(lib, index)
     if dev is None:
         return None, None
+    # Try v2 first (has reserved field).
     mem = _Memory()
     lib.nvmlDeviceGetMemoryInfo_v2.argtypes = [ctypes.c_void_p,
                                                ctypes.POINTER(_Memory)]
     lib.nvmlDeviceGetMemoryInfo_v2.restype = ctypes.c_int
-    if lib.nvmlDeviceGetMemoryInfo_v2(dev, ctypes.byref(mem)) != 0:
+    if lib.nvmlDeviceGetMemoryInfo_v2(dev, ctypes.byref(mem)) == 0:
+        return int(mem.used), int(mem.total)
+    # Fallback to v1 (total, free, used — no reserved).
+    mem1 = _MemoryV1()
+    lib.nvmlDeviceGetMemoryInfo.argtypes = [ctypes.c_void_p,
+                                            ctypes.POINTER(_MemoryV1)]
+    lib.nvmlDeviceGetMemoryInfo.restype = ctypes.c_int
+    if lib.nvmlDeviceGetMemoryInfo(dev, ctypes.byref(mem1)) != 0:
         return None, None
-    return int(mem.used), int(mem.total)
+    return int(mem1.used), int(mem1.total)
 
 
 def driver_version() -> Optional[str]:

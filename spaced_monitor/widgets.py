@@ -161,7 +161,7 @@ class StackedBar(Gtk.DrawingArea):
         super().__init__()
         self._pal = pal or DARK
         self._segments: list[tuple[float, tuple[float, float, float]]] = []
-        self.set_size_request(120, 16)
+        self.set_size_request(40, 16)
         self.connect("draw", self._on_draw)
 
     def set_segments(self, segments) -> None:

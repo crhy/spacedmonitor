@@ -96,6 +96,8 @@ class FooterItem(Gtk.Box):
 class MonitorWindow(Gtk.Window):
     """The main Spaced Monitor window."""
 
+    _GAUGE_MIN_H = 100  # minimum height for the gauge card row
+
     def __init__(self, sampler: Callable[[], Snapshot], refresh_ms: int = 1000,
                  pal=None, proc_sampler: Callable[[], list] | None = None) -> None:
         super().__init__(title="Spaced Monitor")
@@ -201,7 +203,7 @@ class MonitorWindow(Gtk.Window):
         self._paned_inner = inner
 
         outer = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        outer.pack1(gauges, False, True)
+        outer.pack1(gauges, False, False)
         outer.pack2(inner, True, True)
         self._paned_outer = outer
 
@@ -217,8 +219,9 @@ class MonitorWindow(Gtk.Window):
         fr = load_pane_fractions(settings)
         self._pane_fracs = fr
         ov_h = self._overview.get_allocated_height() or 900
-        self._paned_outer.set_position(int(fr["pane_gauges"] * ov_h))
-        inner_h = ov_h - self._paned_outer.get_position()
+        pos = max(int(fr["pane_gauges"] * ov_h), self._GAUGE_MIN_H)
+        self._paned_outer.set_position(pos)
+        inner_h = ov_h - pos
         self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
         ov_w = self._overview.get_allocated_width() or 1400
         self._paned_mid_h.set_position(int(fr["pane_mid_h"] * ov_w))
@@ -241,8 +244,9 @@ class MonitorWindow(Gtk.Window):
         if ov_h < 1 or ov_w < 1:
             return False
         fr = self._pane_fracs
-        self._paned_outer.set_position(int(fr["pane_gauges"] * ov_h))
-        inner_h = ov_h - self._paned_outer.get_position()
+        pos = max(int(fr["pane_gauges"] * ov_h), self._GAUGE_MIN_H)
+        self._paned_outer.set_position(pos)
+        inner_h = ov_h - pos
         self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
         self._paned_mid_h.set_position(int(fr["pane_mid_h"] * ov_w))
         return False

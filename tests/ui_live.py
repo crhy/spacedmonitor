@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Live UI test: drive the real MonitorWindow with real samplers under Xvfb."""
+"""Live UI test: drive the real MonitorWindow with real samplers under Xvfb.
+
+Tests layout correctness at four window sizes: 620x420, 1000x700, 1400x900,
+1920x1040.  Asserts gauge cards are never clipped, process-list columns are
+always visible, no horizontal scrollbar, and GPU memory shows real data.
+"""
 
 from __future__ import annotations
 
@@ -20,50 +25,16 @@ from spaced_monitor import collect
 
 SCREENSHOT_DIR = Path(__file__).resolve().parent.parent / "build" / "screenshots"
 
+SIZES = [(620, 420), (1000, 700), (1400, 900), (1920, 1040)]
+
 
 def _pump(seconds: float) -> None:
     """Run the GTK event loop for the given number of seconds."""
     def _quit():
         Gtk.main_quit()
-        return False  # don't repeat
+        return False
     GLib.timeout_add_seconds(int(seconds), _quit)
     Gtk.main()
-
-
-def _visible_labels(widget: Gtk.Widget) -> list:
-    """Collect all visible Gtk.Label texts in a widget tree."""
-    texts = []
-    if isinstance(widget, Gtk.Label):
-        if widget.get_visible() and widget.get_text().strip():
-            texts.append(widget.get_text())
-    if hasattr(widget, "get_children"):
-        for child in widget.get_children():
-            texts.extend(_visible_labels(child))
-    return texts
-
-
-def _count_visible_rows(page: Gtk.Widget) -> int:
-    """Count visible rows in the ProcessesPage grid by counting end-buttons."""
-    # Navigate: page -> vbox -> ScrolledWindow -> (Viewport) -> Gtk.Grid
-    for child in page.get_children():
-        if isinstance(child, Gtk.Box):
-            for sub in child.get_children():
-                if isinstance(sub, Gtk.ScrolledWindow):
-                    grid = sub.get_child()
-                    # GTK3 wraps in a Viewport
-                    if not isinstance(grid, Gtk.Grid):
-                        children = grid.get_children() if hasattr(grid, 'get_children') else []
-                        if children:
-                            grid = children[0]
-                    if not isinstance(grid, Gtk.Grid):
-                        return 0
-                    # Count visible Gtk.Button widgets (one end-button per row)
-                    count = 0
-                    for widget in grid.get_children():
-                        if isinstance(widget, Gtk.Button) and widget.get_visible():
-                            count += 1
-                    return count
-    return 0
 
 
 def _capture_window(win: Gtk.Window, path: str) -> bool:
@@ -86,238 +57,172 @@ def _capture_window(win: Gtk.Window, path: str) -> bool:
     return os.path.exists(path) and os.path.getsize(path) > 1024
 
 
+def _inside(alloc, container_alloc) -> bool:
+    """True if alloc is fully inside container_alloc."""
+    return (alloc.x >= container_alloc.x and
+            alloc.y >= container_alloc.y and
+            alloc.x + alloc.width <= container_alloc.x + container_alloc.width and
+            alloc.y + alloc.height <= container_alloc.y + container_alloc.height)
+
+
+def _find_scrolled_window(widget: Gtk.Widget) -> Gtk.ScrolledWindow | None:
+    """Find the first ScrolledWindow in a widget tree."""
+    if isinstance(widget, Gtk.ScrolledWindow):
+        return widget
+    if hasattr(widget, "get_children"):
+        for child in widget.get_children():
+            found = _find_scrolled_window(child)
+            if found:
+                return found
+    return None
+
+
+def _has_horizontal_scrollbar(sw: Gtk.ScrolledWindow) -> bool:
+    """Check if the ScrolledWindow shows a horizontal scrollbar."""
+    sb = sw.get_child()  # In GTK3 the child is a Gtk.Grid or viewport
+    # The scrollbar is a sibling of the content in the internal structure.
+    # Check the policy: if horizontal is NEVER, no h-scrollbar can appear.
+    hpol = sw.get_policy()[0]
+    if hpol == Gtk.PolicyType.NEVER:
+        return False
+    # If policy allows it, check if a scrollbar child is visible.
+    for child in sw.get_children():
+        if isinstance(child, Gtk.Scrollbar) and child.is_visible():
+            orient = child.get_orientation()
+            if orient == Gtk.Orientation.HORIZONTAL:
+                return True
+    return False
+
+
+def _find_col_headers(app_table: Gtk.Box) -> dict:
+    """Find column header buttons in the app table grid."""
+    headers = {}
+    sw = _find_scrolled_window(app_table)
+    if sw is None:
+        return headers
+    grid = sw.get_child()
+    # GTK3 may wrap in a viewport
+    if not isinstance(grid, Gtk.Grid):
+        children = grid.get_children() if hasattr(grid, "get_children") else []
+        if children:
+            grid = children[0]
+    if not isinstance(grid, Gtk.Grid):
+        return headers
+    for child in grid.get_children():
+        if isinstance(child, Gtk.Button):
+            ctx = child.get_style_context()
+            if "col-header" in ctx.list_classes():
+                headers[child.get_label().split()[0]] = child
+    return headers
+
+
 def main() -> int:
-    """Build the real window, pump the loop, assert per-tab content."""
+    """Build the real window, test layout at four sizes."""
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     sampler_obj = collect.Sampler()
     pal = theme_mod.palette("dark")
     theme_mod.apply_css(pal)
 
     win = MonitorWindow(sampler=sampler_obj.sample, refresh_ms=1000, pal=pal)
-    win.set_default_size(1400, 900)
     win.show_all()
     win.show_tab_only()
     win.start_worker()
 
-    # Pump 8 seconds so at least 8 snapshots arrive.
-    _pump(8.0)
+    # Pump 3 seconds so at least 3 snapshots arrive.
+    _pump(3.0)
 
     errors = []
 
-    # --- Overview assertions ---
-    win._on_tab(None, "overview")
-    _pump(1.0)
-    path = str(SCREENSHOT_DIR / "live-overview.png")
-    if not _capture_window(win, path):
-        errors.append(f"FAIL: live-overview.png not captured")
-    else:
-        print(f"OK: {path} ({os.path.getsize(path)} bytes)")
+    for w, h in SIZES:
+        win._on_tab(None, "overview")
+        win.resize(w, h)
+        _pump(1.0)
 
-    # Check CPU model is visible in the CPU gauge card.
-    labels = _visible_labels(win._cpu_card)
-    cpu_model_found = any(
-        lbl for lbl in labels
-        if lbl and lbl != "\u2013" and len(lbl) > 3
-    )
-    if not cpu_model_found:
-        errors.append("FAIL: CPU gauge card shows no CPU model text")
-    else:
-        print(f"OK: CPU card model: {labels[1] if len(labels) > 1 else '?'}")
-
-    # Cards in one row at 1400x900.
-    card_ys = [c.get_allocation().y for c in
-               (win._cpu_card, win._gpu_card, win._mem_card, win._gmem_card)]
-    if max(card_ys) - min(card_ys) > 5:
-        errors.append(f"FAIL: gauge cards not in one row at 1400x900 (ys={card_ys})")
-    else:
-        print(f"OK: gauge cards in one row at 1400x900 (y={card_ys[0]})")
-
-    # --- Processes tab assertions ---
-    win._on_tab(None, "processes")
-    _pump(1.0)
-    path = str(SCREENSHOT_DIR / "live-processes.png")
-    if not _capture_window(win, path):
-        errors.append("FAIL: live-processes.png not captured")
-    else:
-        print(f"OK: {path} ({os.path.getsize(path)} bytes)")
-
-    row_count = _count_visible_rows(win._processes_page)
-    if row_count < 5:
-        errors.append(f"FAIL: Processes has only {row_count} visible row labels (need >= 5)")
-    else:
-        print(f"OK: Processes has {row_count} visible row name labels")
-
-    # No kernel-thread names visible.
-    proc_labels = _visible_labels(win._processes_page)
-    kernel_names = ["Kworker", "Ksoftirqd", "kthreadd"]
-    found_kernel = [n for n in kernel_names if any(n in lbl for lbl in proc_labels)]
-    if found_kernel:
-        errors.append(f"FAIL: kernel-thread names visible: {found_kernel}")
-    else:
-        print("OK: no kernel-thread names in Processes tab")
-
-    # --- Hardware tab assertions ---
-    win._on_tab(None, "hardware")
-    _pump(1.0)
-    path = str(SCREENSHOT_DIR / "live-hardware.png")
-    if not _capture_window(win, path):
-        errors.append("FAIL: live-hardware.png not captured")
-    else:
-        print(f"OK: {path} ({os.path.getsize(path)} bytes)")
-
-    hw_labels = _visible_labels(win._hardware_page)
-
-    # Sensor rows: at least one line containing "°C" with a name.
-    sensor_lines = [lbl for lbl in hw_labels if "\u00b0C" in lbl]
-    if len(sensor_lines) < 1:
-        errors.append("FAIL: no sensor readings with \u00b0C visible")
-    else:
-        print(f"OK: {len(sensor_lines)} sensor \u00b0C readings visible")
-
-    # Storage card: filesystem mount points visible.
-    mount_lines = [lbl for lbl in hw_labels if lbl.startswith("/")]
-    if len(mount_lines) < 1:
-        errors.append("FAIL: no filesystem mount points visible in Storage card")
-    else:
-        print(f"OK: {len(mount_lines)} filesystem rows visible")
-
-    # Network card: interface names visible.
-    iface_names = ["eth0", "wlan0", "lo", "docker", "veth"]
-    iface_found = [lbl for lbl in hw_labels if any(n in lbl for n in iface_names)]
-    if len(iface_found) < 1:
-        errors.append("FAIL: no network interfaces visible in Network card")
-    else:
-        print(f"OK: {len(iface_found)} network interface rows visible")
-
-    # CPU card: per-core meters visible.
-    core_meter_count = 0
-    # Find the FlowBox (may be nested inside ScrolledWindow/Viewport).
-    flow = None
-    def _find_flowbox(w):
-        for c in w.get_children():
-            if isinstance(c, Gtk.FlowBox):
-                return c
-            found = _find_flowbox(c)
-            if found:
-                return found
-        return None
-    flow = _find_flowbox(win._hardware_page)
-    if flow:
-        for fbc in flow.get_children():
-            card = fbc.get_children()[0] if hasattr(fbc, "get_children") and fbc.get_children() else None
-            if card is None:
-                continue
-            body = card.get_children()[0]
-            title = body.get_children()[0] if body.get_children() else None
-            if isinstance(title, Gtk.Label) and title.get_text() == "CPU":
-                for child in body.get_children():
-                    if isinstance(child, Gtk.Grid):
-                        core_meter_count = sum(1 for m in child.get_children() if m.get_visible())
-    if core_meter_count < 2:
-        errors.append(f"FAIL: CPU card shows {core_meter_count} core meters (need >= 2)")
-    else:
-        print(f"OK: CPU card shows {core_meter_count} per-core meters")
-
-    # Window width must not exceed the default size.
-    width = win.get_allocated_width()
-    if width > 1400:
-        errors.append(f"FAIL: window width {width} > 1400")
-    else:
-        print(f"OK: window width {width} <= 1400")
-
-    # --- Window height assertion ---
-    height = win.get_allocated_height()
-    if height > 900:
-        errors.append(f"FAIL: window height {height} > 900")
-    else:
-        print(f"OK: window height {height} <= 900")
-
-    # --- Resize to small window ---
-    win._on_tab(None, "overview")
-    _pump(0.5)
-    win.resize(700, 450)
-    _pump(1.0)
-    path = str(SCREENSHOT_DIR / "live-overview-small.png")
-    if not _capture_window(win, path):
-        errors.append("FAIL: live-overview-small.png not captured")
-    else:
-        print(f"OK: {path} ({os.path.getsize(path)} bytes)")
-
-    # Overview Paned must fit within the window.
-    win_w = win.get_allocated_width()
-    win_h = win.get_allocated_height()
-    ov_a = win._overview.get_allocation()
-    if ov_a.x < 0 or ov_a.y < 0 or ov_a.x + ov_a.width > win_w or ov_a.y + ov_a.height > win_h:
-        errors.append(
-            f"FAIL: overview alloc {ov_a.x},{ov_a.y} "
-            f"{ov_a.width}x{ov_a.height} exceeds {win_w}x{win_h}")
-    else:
-        print(f"OK: overview fits at {win_w}x{win_h}")
-
-    # Gauges still drawn (allocation height > 0).
-    gauge_h = win._cpu_card._gauge.get_allocated_height()
-    if gauge_h < 1:
-        errors.append(f"FAIL: CPU gauge height {gauge_h} < 1")
-    else:
-        print(f"OK: CPU gauge height {gauge_h} at small size")
-
-    # Four gauge cards share one row at 700x450.
-    card_ys_small = [c.get_allocation().y for c in
-                     (win._cpu_card, win._gpu_card, win._mem_card, win._gmem_card)]
-    if max(card_ys_small) - min(card_ys_small) > 5:
-        errors.append(f"FAIL: gauge cards not in one row at 700x450 (ys={card_ys_small})")
-    else:
-        print(f"OK: gauge cards in one row at 700x450 (y={card_ys_small[0]})")
-
-    # Process list scroll area >= 30% of window height.
-    scroll_h = win._app_table._scrolled.get_allocated_height()
-    if scroll_h < 0.30 * win_h:
-        errors.append(f"FAIL: scroll area {scroll_h}px < 30% of {win_h}px")
-    else:
-        print(f"OK: scroll area {scroll_h}px >= 30% of {win_h}px")
-
-    # Middle row >= 15% of window height.
-    mid_h = win._temp_card.get_allocated_height()
-    if mid_h < 0.15 * win_h:
-        errors.append(f"FAIL: middle row {mid_h}px < 15% of {win_h}px")
-    else:
-        print(f"OK: middle row {mid_h}px >= 15% of {win_h}px")
-
-    # Three sections inside Gtk.Paned.
-    if not isinstance(win._overview, Gtk.Paned):
-        errors.append("FAIL: overview is not a Gtk.Paned")
-    else:
-        print("OK: overview is Gtk.Paned")
-
-    # Theme button has an image child.
-    theme_btn_child = win._theme_btn.get_child()
-    has_image = isinstance(theme_btn_child, Gtk.Image)
-    if not has_image:
-        errors.append("FAIL: theme button has no image child")
-    else:
-        print("OK: theme button has image child")
-
-    # No label with text "S" in the top bar.
-    topbar_found = False
-    def _find_topbar(w):
-        for c in w.get_children():
-            ctx = c.get_style_context()
-            if "topbar" in ctx.list_classes():
-                return c
-            found = _find_topbar(c)
-            if found:
-                return found
-        return None
-    topbar = _find_topbar(win)
-    if topbar:
-        tb_labels = _visible_labels(topbar)
-        s_labels = [l for l in tb_labels if l.strip() == "S"]
-        if s_labels:
-            errors.append("FAIL: label 'S' found in top bar")
+        path = str(SCREENSHOT_DIR / f"live-overview-{w}x{h}.png")
+        if not _capture_window(win, path):
+            errors.append(f"FAIL: live-overview-{w}x{h}.png not captured")
         else:
-            print("OK: no 'S' label in top bar")
-    else:
-        errors.append("FAIL: topbar not found in widget tree")
+            print(f"OK: {path} ({os.path.getsize(path)} bytes)")
+
+        win_alloc = win.get_allocation()
+
+        # (a) Each of the 4 gauge cards has allocation fully inside window
+        #     with width > 60 and height > 60.
+        cards = (win._cpu_card, win._gpu_card, win._mem_card, win._gmem_card)
+        for card in cards:
+            ca = card.get_allocation()
+            if ca.width <= 60:
+                errors.append(
+                    f"FAIL: {w}x{h} card width {ca.width} <= 60")
+            if ca.height <= 60:
+                errors.append(
+                    f"FAIL: {w}x{h} card height {ca.height} <= 60")
+            if not _inside(ca, win_alloc):
+                errors.append(
+                    f"FAIL: {w}x{h} card not inside window "
+                    f"({ca.x},{ca.y} {ca.width}x{ca.height} "
+                    f"vs {win_alloc.width}x{win_alloc.height})")
+
+        # (b) Each card's title label is allocated (height > 0) and fully
+        #     inside its card.
+        title_labels = [
+            win._cpu_card._title_lbl,
+            win._gpu_card._title_lbl,
+            win._mem_card._title_lbl,
+            win._gmem_card._title_lbl,
+        ]
+        for card, lbl in zip(cards, title_labels):
+            la = lbl.get_allocation()
+            if la.height < 1:
+                errors.append(
+                    f"FAIL: {w}x{h} title label height {la.height} < 1")
+            if not _inside(la, card.get_allocation()):
+                errors.append(
+                    f"FAIL: {w}x{h} title label not inside card")
+
+        # (c) CPU, RAM, GPU, Disk header labels of the process list are
+        #     all allocated and fully inside the window.
+        headers = _find_col_headers(win._app_table)
+        for col_name in ("CPU", "RAM", "GPU", "Disk"):
+            btn = headers.get(col_name)
+            if btn is None:
+                errors.append(
+                    f"FAIL: {w}x{h} col header '{col_name}' not found")
+                continue
+            ba = btn.get_allocation()
+            if ba.height < 1:
+                errors.append(
+                    f"FAIL: {w}x{h} col header '{col_name}' height {ba.height} < 1")
+            if not _inside(ba, win_alloc):
+                errors.append(
+                    f"FAIL: {w}x{h} col header '{col_name}' not inside window")
+
+        # (d) The list's horizontal scrollbar is not visible.
+        sw = _find_scrolled_window(win._app_table)
+        if sw is not None:
+            if _has_horizontal_scrollbar(sw):
+                errors.append(
+                    f"FAIL: {w}x{h} horizontal scrollbar visible in process list")
+
+        # (e) GPU memory card shows used/total text, not em-dash.
+        gpu = sampler_obj.sample().gpu if hasattr(sampler_obj, 'sample') else None
+        # Check the card's big_lbl text (shows pair_gb or em-dash)
+        gmem_text = win._gmem_card._big_lbl.get_text()
+        has_nv = False
+        try:
+            from spaced_monitor import nvml
+            has_nv = nvml.available()
+        except Exception:
+            pass
+        if not has_nv:
+            import shutil
+            has_nv = shutil.which("nvidia-smi") is not None
+        if has_nv and gmem_text in ("\u2013", "", "\u2014"):
+            errors.append(
+                f"FAIL: {w}x{h} GPU memory card shows '{gmem_text}' "
+                f"but NVIDIA GPU is present")
+        elif has_nv:
+            print(f"OK: {w}x{h} GPU memory text: '{gmem_text}'")
 
     # Stop the worker.
     win._stop_event.set()

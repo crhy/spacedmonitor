@@ -62,6 +62,7 @@ class AppTable(Gtk.Box):
         self._msg_timeout_id: int = 0
         self._build_header()
         self._build_scroll_area()
+        self.connect("size-allocate", self._on_size_allocate)
 
     def _build_header(self) -> None:
         """Title, search entry and scope combo across the top of the card."""
@@ -85,7 +86,7 @@ class AppTable(Gtk.Box):
         self._vbox = _vbox(spacing=6)
         self._vbox.pack_start(self._head, expand=False, fill=False, padding=0)
         self._scrolled = Gtk.ScrolledWindow()
-        self._scrolled.set_policy(Gtk.PolicyType.AUTOMATIC,
+        self._scrolled.set_policy(Gtk.PolicyType.NEVER,
                                   Gtk.PolicyType.AUTOMATIC)
         self._grid = Gtk.Grid()
         self._grid.set_row_spacing(4)
@@ -133,6 +134,7 @@ class AppTable(Gtk.Box):
             self._add_row(app, r)
         self._update_meters()
         self._grid.show_all()
+        self._apply_meter_visibility()
 
     def _add_row(self, app: AppUsage, row: int) -> None:
         """Attach one app row: end button, icon, name, value+meter pairs."""
@@ -151,6 +153,7 @@ class AppTable(Gtk.Box):
         name = _value(display_name(app.name, exe=app.exe, cmdline=app.cmdline))
         name.set_hexpand(True)
         name.set_xalign(0.0)
+        name.set_ellipsize(1)
         self._grid.attach(name, 2, row, 1, 1)
         colours = (self._pal.cpu_start, self._pal.ram_start,
                    self._pal.gpu_memory_start, self._pal.disk_read)
@@ -181,6 +184,18 @@ class AppTable(Gtk.Box):
                        app.disk_bps) if app else (0.0, 0, 0.0, 0.0))
             for c, maximum in enumerate(maxima):
                 row_m[c].set_value(meter_fraction(values[c], maximum))
+
+    def _on_size_allocate(self, _widget, _allocation) -> None:
+        """Hide meters below 900px width to keep all columns visible."""
+        self._apply_meter_visibility()
+
+    def _apply_meter_visibility(self) -> None:
+        """Show or hide meters based on current allocated width."""
+        w = self.get_allocated_width()
+        show_meters = w >= 900
+        for row_m in self._meters:
+            for meter in row_m:
+                meter.set_visible(show_meters)
 
     def _on_search(self, entry) -> None:
         """Remember the search text and re-filter."""

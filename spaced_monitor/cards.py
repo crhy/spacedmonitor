@@ -88,10 +88,10 @@ class _CardBase(Gtk.Box):
         self.connect("size-allocate", self._on_size_allocate)
 
     def _on_size_allocate(self, _widget, _allocation) -> None:
-        """Hide detail lines below 260px, title below 170px."""
+        """Hide detail lines below 260px, model below 150px."""
         w = self.get_allocated_width()
-        if w < 170:
-            self._title_lbl.set_visible(False)
+        if w < 150:
+            self._title_lbl.set_visible(True)
             self._model_lbl.set_visible(False)
             self._line1.set_visible(False)
             self._line2.set_visible(False)
@@ -180,10 +180,10 @@ class MemoryCard(Gtk.Box):
         self.connect("size-allocate", self._on_size_allocate)
 
     def _on_size_allocate(self, _widget, _allocation) -> None:
-        """Hide detail lines below 260px, title below 170px."""
+        """Hide detail lines below 260px, bar/legend below 150px."""
         w = self.get_allocated_width()
-        if w < 170:
-            self._title_lbl.set_visible(False)
+        if w < 150:
+            self._title_lbl.set_visible(True)
             self._big_lbl.set_visible(False)
             self._pct_lbl.set_visible(False)
             self._bar.set_visible(False)
@@ -260,10 +260,10 @@ class GpuMemoryCard(Gtk.Box):
         self.connect("size-allocate", self._on_size_allocate)
 
     def _on_size_allocate(self, _widget, _allocation) -> None:
-        """Hide detail lines below 260px, title below 170px."""
+        """Hide detail lines below 260px, bar/legend below 150px."""
         w = self.get_allocated_width()
-        if w < 170:
-            self._title_lbl.set_visible(False)
+        if w < 150:
+            self._title_lbl.set_visible(True)
             self._big_lbl.set_visible(False)
             self._pct_lbl.set_visible(False)
             self._bar.set_visible(False)

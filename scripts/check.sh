@@ -24,7 +24,7 @@ if [ -f tests/ui_smoke.py ]; then
 fi
 
 if [ -f tests/ui_live.py ]; then
-    timeout 180 xvfb-run -a -s "-screen 0 1600x1000x24" python3 tests/ui_live.py
+    timeout 180 xvfb-run -a -s "-screen 0 2000x1200x24" python3 tests/ui_live.py
     echo "OK: Live UI test (real samplers, real window)"
 fi
 
