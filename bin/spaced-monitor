@@ -3,8 +3,12 @@
 import os
 import sys
 
-# Installed: /usr/lib/spaced-monitor holds the package; from a checkout, the repo root.
-for root in ("/usr/lib/spaced-monitor", os.path.dirname(os.path.dirname(os.path.realpath(__file__)))):
+here = os.path.dirname(os.path.realpath(__file__))
+# Installed: /usr/lib/spaced-monitor; staged: <prefix>/usr/lib/spaced-monitor;
+# from a checkout: the repo root.
+for root in ("/usr/lib/spaced-monitor",
+             os.path.join(here, os.pardir, "lib", "spaced-monitor"),
+             os.path.dirname(os.path.dirname(here))):
     if os.path.isdir(os.path.join(root, "spaced_monitor")):
         sys.path.insert(0, root)
         break

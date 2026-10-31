@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from datetime import datetime
@@ -345,9 +346,14 @@ class MonitorApp(Gtk.Application):
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point: run the real application."""
+    args = argv if argv is not None else sys.argv[1:]
+    if "--version" in args or "-V" in args:
+        from spaced_monitor import __version__
+        print(f"spaced-monitor {__version__}")
+        return 0
     sampler_obj = Sampler()
     app = MonitorApp(sampler=sampler_obj.sample)
-    app.run(argv or [])
+    app.run(args)
     if app.window is None:
         return 1
     # This GTK build never calls do_main, so drive the loop here; it returns

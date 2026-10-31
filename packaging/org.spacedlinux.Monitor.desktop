@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Spaced Monitor
+GenericName=System Monitor
+Comment=See what your computer is doing: CPU, GPU, memory, temperatures and programs
+Exec=spaced-monitor
+Icon=org.spacedlinux.Monitor
+Terminal=false
+Categories=System;Monitor;GTK;
+Keywords=task manager;cpu;gpu;temperature;processes;
+StartupWMClass=org.spacedlinux.Monitor
