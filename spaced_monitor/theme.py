@@ -27,6 +27,7 @@ class Palette:
     muted: tuple[float, float, float]
     cpu_start: tuple[float, float, float]
     cpu_end: tuple[float, float, float]
+    ram_start: tuple[float, float, float]
     gpu_start: tuple[float, float, float]
     gpu_end: tuple[float, float, float]
     memory_start: tuple[float, float, float]
@@ -52,6 +53,7 @@ DARK = Palette(
     muted=_hex("#8a96ab"),
     cpu_start=_hex("#22c55e"),
     cpu_end=_hex("#34d399"),
+    ram_start=_hex("#0ea5e9"),
     gpu_start=_hex("#0ea5e9"),
     gpu_end=_hex("#38bdf8"),
     memory_start=_hex("#f59e0b"),
@@ -77,6 +79,7 @@ LIGHT = Palette(
     muted=_hex("#6b7280"),
     cpu_start=_hex("#22c55e"),
     cpu_end=_hex("#34d399"),
+    ram_start=_hex("#0ea5e9"),
     gpu_start=_hex("#0ea5e9"),
     gpu_end=_hex("#38bdf8"),
     memory_start=_hex("#f59e0b"),

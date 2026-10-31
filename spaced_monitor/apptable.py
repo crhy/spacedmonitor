@@ -140,14 +140,18 @@ class AppTable(Gtk.Box):
         btn.set_tooltip_text("End this app")
         btn.connect("clicked", self._on_end, app)
         self._grid.attach(btn, 0, row, 1, 1)
+        icon_name = app.icon or "application-x-executable"
+        theme = Gtk.IconTheme.get_default()
+        if icon_name != "application-x-executable" and not theme.has_icon(icon_name):
+            icon_name = "application-x-executable"
         icon = Gtk.Image.new_from_icon_name(
-            app.icon or "application-x-executable", Gtk.IconSize.MENU)
+            icon_name, Gtk.IconSize.MENU)
         self._grid.attach(icon, 1, row, 1, 1)
-        name = _value(display_name(app.name))
+        name = _value(display_name(app.name, exe=app.exe, cmdline=app.cmdline))
         name.set_hexpand(True)
         name.set_xalign(0.0)
         self._grid.attach(name, 2, row, 1, 1)
-        colours = (self._pal.cpu_start, self._pal.gpu_start,
+        colours = (self._pal.cpu_start, self._pal.ram_start,
                    self._pal.gpu_memory_start, self._pal.disk_read)
         texts = (fmt.percent(app.cpu_percent), fmt.bytes_gb(app.rss),
                  fmt.percent(app.gpu_percent), fmt.rate(app.disk_bps))

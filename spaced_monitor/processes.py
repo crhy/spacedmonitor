@@ -19,6 +19,8 @@ class ProcUsage:
     name: str
     cpu_percent: float
     rss: int
+    exe: str = ""
+    cmdline: list = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -34,6 +36,8 @@ class AppUsage:
     user: str
     icon: str
     children: list = field(default_factory=list)
+    exe: str = ""
+    cmdline: list = None  # type: ignore[assignment]
 
 
 # Known process names that need a special label (not capitalised or renamed).
@@ -41,10 +45,45 @@ _NAME_MAP = {
     "llama-server": "llama-server",
     "Xorg": "System display (Xorg)",
     "python3": "Python",
+    "claude": "Claude Code",
+    "pi": "pi (coding agent)",
+    "strata": "Strata",
 }
 
+_GENERIC_INTERPRETERS = frozenset(("python3", "node", "java", "bash"))
+_SKIP_DIRS = frozenset(("versions", "bin", "lib", ".local", "share", ""))
 
-def display_name(name: str) -> str:
+
+def _is_version(name: str) -> bool:
+    """True when name is only digits and dots (e.g. '2.1.287')."""
+    return bool(name) and all(c.isdigit() or c == "." for c in name)
+
+
+def _name_from_exe(exe: str) -> str:
+    """Derive app name from exe path's parent dirs, skipping generic names."""
+    if not exe:
+        return ""
+    parts = exe.replace("\\", "/").split("/")
+    # Walk from the basename's parent upward.
+    for part in reversed(parts[:-1]):
+        if part and part not in _SKIP_DIRS:
+            return part[0].upper() + part[1:]
+    return ""
+
+
+def _name_from_cmdline(cmdline: list) -> str:
+    """Derive app name from a script path in cmdline (e.g. /x/y/app.py -> App)."""
+    for arg in (cmdline or []):
+        if arg.startswith("-"):
+            continue
+        base = os.path.basename(arg)
+        stem = os.path.splitext(base)[0]
+        if stem and not stem.startswith("-") and not _is_version(stem):
+            return stem[0].upper() + stem[1:]
+    return ""
+
+
+def display_name(name: str, exe: str = "", cmdline: list = None) -> str:
     """Turn a raw process name into a nicer label."""
     if name in _NAME_MAP:
         return _NAME_MAP[name]
@@ -53,6 +92,13 @@ def display_name(name: str) -> str:
         if base.endswith(suffix):
             base = base[: -len(suffix)]
             break
+    if _is_version(base) or base.lower() in _GENERIC_INTERPRETERS:
+        derived = _name_from_exe(exe) or _name_from_cmdline(cmdline or [])
+        if derived:
+            return derived
+        if base.lower() in _NAME_MAP:
+            return _NAME_MAP[base.lower()]
+        return base[0].upper() + base[1:]
     if base:
         base = base[0].upper() + base[1:]
     return base
@@ -90,11 +136,40 @@ def _read_desktop(path: str) -> dict:
     return out
 
 
-def icon_for(name: str, dirs: Sequence[str] = _ICON_DIRS) -> str:
-    """Find a matching .desktop Icon for a process name; cached."""
+def _flatpak_app_id(pid: int) -> str:
+    """Read the Flatpak app id from /proc/<pid>/root/.flatpak-info or cgroup."""
+    try:
+        with open(f"/proc/{pid}/root/.flatpak-info", encoding="utf-8",
+                  errors="replace") as f:
+            for line in f:
+                if line.startswith("FlatpakAppID="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    try:
+        with open(f"/proc/{pid}/cgroup", encoding="utf-8",
+                  errors="replace") as f:
+            for line in f:
+                if "flatpak/" in line:
+                    parts = line.split("/")
+                    for p in parts:
+                        if "." in p and "-" in p and len(p) > 4:
+                            return p
+    except OSError:
+        pass
+    return ""
+
+
+def icon_for(name: str, dirs: Sequence[str] = _ICON_DIRS,
+             exe: str = "", pid: int = 0) -> str:
+    """Find a matching .desktop Icon for a process; cached."""
     if name in _icon_cache:
         return _icon_cache[name]
     target = name.lower()
+    exe_base = os.path.basename(exe).lower() if exe else ""
+    # Flatpak: try the app id as an additional target.
+    fpk_id = _flatpak_app_id(pid) if pid else ""
+    targets = {t for t in (target, exe_base, fpk_id.lower()) if t}
     for d in dirs:
         try:
             entries = os.listdir(d)
@@ -104,12 +179,15 @@ def icon_for(name: str, dirs: Sequence[str] = _ICON_DIRS) -> str:
             if not fn.endswith(".desktop"):
                 continue
             stem = fn[: -len(".desktop")].lower()
+            stem_clean = stem.removesuffix("-bin")
             keys = _read_desktop(os.path.join(d, fn))
             exec_base = ""
             if "Exec" in keys:
-                exec_base = os.path.basename(keys["Exec"].split()[0]).lower()
+                exec_base = os.path.basename(
+                    keys["Exec"].split()[0]).lower()
             wm = keys.get("StartupWMClass", "").lower()
-            if stem == target or exec_base == target or wm == target:
+            hits = {stem, stem_clean, exec_base, wm} & targets
+            if hits:
                 icon = keys.get("Icon") or _ICON_FALLBACK
                 _icon_cache[name] = icon
                 return icon
@@ -170,6 +248,22 @@ def _gpu_sm_by_pid(run: Callable = None) -> dict[int, float]:
         sm = 0.0 if cols[3] == "-" else float(cols[3])
         result[pid] = sm
     return result
+
+
+def _safe_exe(proc) -> str:
+    """Return proc.exe() or empty string on access-denied/missing."""
+    try:
+        return proc.exe() or ""
+    except Exception:
+        return ""
+
+
+def _safe_cmdline(proc) -> list:
+    """Return proc.cmdline() or empty list on access-denied/missing."""
+    try:
+        return proc.cmdline() or []
+    except Exception:
+        return []
 
 
 class ProcessSampler:
@@ -247,13 +341,20 @@ class ProcessSampler:
             except (self._ps.AccessDenied, self._ps.ZombieProcess):
                 continue
             live.add(pid)
+            exe = _safe_exe(proc)
+            cmdl = _safe_cmdline(proc)
             disk = self._io_delta(proc, pid)
             g = groups.setdefault((name, user), {
                 "pids": [], "cpu": 0.0, "rss": 0, "gpu_percent": 0.0,
                 "gpu_mem": 0, "disk": 0, "children": [],
+                "exe": "", "cmdline": [],
             })
+            if not g["exe"] and exe:
+                g["exe"] = exe
+            if not g["cmdline"] and cmdl:
+                g["cmdline"] = cmdl
             g["pids"].append(pid)
-            g["children"].append(ProcUsage(pid, name, cpu, rss))
+            g["children"].append(ProcUsage(pid, name, cpu, rss, exe, cmdl))
             g["cpu"] += cpu
             g["rss"] += rss
             g["gpu_percent"] += gpu_sm.get(pid, 0.0)
@@ -270,9 +371,10 @@ class ProcessSampler:
                 cpu_percent=g["cpu"] / cpu_n,
                 rss=g["rss"], gpu_percent=g["gpu_percent"], gpu_mem=g["gpu_mem"],
                 disk_bps=(g["disk"] / dt) if dt > 0 else 0.0,
-                user=user, icon=icon_for(name),
+                user=user, icon=icon_for(name, exe=g["exe"], pid=g["pids"][0] if g["pids"] else 0),
                 children=sorted(g["children"],
                                 key=lambda p: p.cpu_percent, reverse=True),
+                exe=g["exe"], cmdline=g["cmdline"],
             ))
         rows.sort(key=lambda a: a.cpu_percent, reverse=True)
         return rows
@@ -288,7 +390,7 @@ def filter_apps(apps: Sequence[AppUsage], text: str = "", scope: str = "all",
     for a in apps:
         if scope == "mine" and a.user != me:
             continue
-        if low and low not in display_name(a.name).lower():
+        if low and low not in display_name(a.name, exe=a.exe, cmdline=a.cmdline).lower():
             continue
         out.append(a)
     return out
@@ -301,7 +403,7 @@ def end_app(app: AppUsage, force: bool = False, kill: Callable = os.kill,
         me = os.getpid()
     if uid is None:
         uid = os.getuid()
-    name = display_name(app.name)
+    name = display_name(app.name, exe=app.exe, cmdline=app.cmdline)
     for pid in app.pids:
         if pid in (1, 2) or pid == me:
             return (False, f"refusing to end {name}: protected process {pid}")
@@ -339,7 +441,7 @@ def end_immediate(app: AppUsage, kill: Callable = os.kill,
         me = os.getpid()
     if uid is None:
         uid = os.getuid()
-    name = display_name(app.name)
+    name = display_name(app.name, exe=app.exe, cmdline=app.cmdline)
     for pid in app.pids:
         if pid in (1, 2) or pid == me:
             return (False, f"refusing to end {name}: protected process {pid}")

@@ -324,13 +324,18 @@ class ProcessesPage(Gtk.Box):
         end.connect("clicked", self._on_end, app)
         self._grid.attach(end, 0, row, 1, 1)
         key = (app.name, app.user)
-        toggle = _flat_button("\u25b1" if key in self._expanded else "\u25b0")
-        toggle.connect("clicked", self._on_expand, app)
-        self._grid.attach(toggle, 1, row, 1, 1)
+        if len(app.pids) > 1:
+            toggle = _flat_button("\u25be" if key in self._expanded else "\u25b8")
+            toggle.connect("clicked", self._on_expand, app)
+            self._grid.attach(toggle, 1, row, 1, 1)
+        icon_name = app.icon or "application-x-executable"
+        theme = Gtk.IconTheme.get_default()
+        if icon_name != "application-x-executable" and not theme.has_icon(icon_name):
+            icon_name = "application-x-executable"
         icon = Gtk.Image.new_from_icon_name(
-            app.icon or "application-x-executable", Gtk.IconSize.MENU)
+            icon_name, Gtk.IconSize.MENU)
         self._grid.attach(icon, 2, row, 1, 1)
-        name = Gtk.Label(label=display_name(app.name))
+        name = Gtk.Label(label=display_name(app.name, exe=app.exe, cmdline=app.cmdline))
         name.set_hexpand(True)
         name.set_xalign(0.0)
         self._grid.attach(name, 3, row, 1, 1)
