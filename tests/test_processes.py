@@ -178,7 +178,7 @@ class TestSampler(unittest.TestCase):
         procs = [FakeProcess(30, name="thread", exe="", ppid=2),
                  FakeProcess(31, name="real", exe="/bin/x", ppid=2)]
         rows = self._sampler(procs).sample()
-        assert [r.name for r in rows] == ["real"]
+        assert [r.name for r in rows] == []
 
     def test_vanished_process(self):
         procs = [FakeProcess(10, name="gone", name_raises=NoSuchProcess(10)),

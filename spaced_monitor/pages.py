@@ -495,6 +495,7 @@ class _CpuCard(_HCard):
                 meter.set_value(fraction)
                 meter.set_tooltip_text(f"{name} {fmt.percent(per_core[col])}")
                 self._cores.attach(meter, col, row, 1, 1)
+                meter.show_all()
 
 
 class _SensorCard(_HCard):
@@ -528,10 +529,12 @@ class _SensorCard(_HCard):
         """One sensor row: name on the left, coloured value on the right."""
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         name = _muted("")
+        name.set_line_wrap(True)
         value = _value("")
         box.pack_start(name, True, True, 0)
         box.pack_start(value, False, False, 0)
         self.add_widget(box)
+        box.show_all()
         return (name, value)
 
 
@@ -635,12 +638,14 @@ class _StorageCard(_HCard):
         """One filesystem row: mount, used bar, used / total text."""
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         name = _muted("")
+        name.set_line_wrap(True)
         bar = Meter(self._pal)
         value = _value("")
         box.pack_start(name, True, True, 0)
         box.pack_start(bar, True, True, 0)
         box.pack_start(value, False, False, 0)
         self.add_widget(box)
+        box.show_all()
         return (name, bar, value)
 
 
@@ -683,6 +688,7 @@ class _NetworkCard(_HCard):
         box.pack_start(addr, False, False, 0)
         box.pack_start(rates, False, False, 0)
         self.add_widget(box)
+        box.show_all()
         return (iface, addr, rates)
 
 
@@ -709,10 +715,13 @@ class HardwarePage(Gtk.Box):
     def _build(self) -> None:
         """Wrap the FlowBox of cards in the page frame."""
         self._flow = Gtk.FlowBox()
-        self._flow.set_orientation(Gtk.Orientation.VERTICAL)
         self._flow.set_selection_mode(False)
-        self._flow.set_max_children_per_line(3)
-        self.pack_start(self._flow, True, True, 0)
+        self._flow.set_max_children_per_line(2)
+        self._flow.set_homogeneous(True)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self._flow)
+        self.pack_start(scroll, True, True, 0)
         self._build_cards()
 
     def _build_cards(self) -> None:

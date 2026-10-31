@@ -139,6 +139,15 @@ def main() -> int:
     else:
         print(f"OK: Processes has {row_count} visible row name labels")
 
+    # No kernel-thread names visible.
+    proc_labels = _visible_labels(win._processes_page)
+    kernel_names = ["Kworker", "Ksoftirqd", "kthreadd"]
+    found_kernel = [n for n in kernel_names if any(n in lbl for lbl in proc_labels)]
+    if found_kernel:
+        errors.append(f"FAIL: kernel-thread names visible: {found_kernel}")
+    else:
+        print("OK: no kernel-thread names in Processes tab")
+
     # --- Hardware tab assertions ---
     win._on_tab(None, "hardware")
     _pump(1.0)
@@ -149,14 +158,64 @@ def main() -> int:
         print(f"OK: {path} ({os.path.getsize(path)} bytes)")
 
     hw_labels = _visible_labels(win._hardware_page)
-    has_sensors = any("Sensors" in lbl for lbl in hw_labels)
-    has_storage = any("Storage" in lbl for lbl in hw_labels)
-    if not has_sensors:
-        errors.append("FAIL: Hardware page missing 'Sensors' title")
-    if not has_storage:
-        errors.append("FAIL: Hardware page missing 'Storage' title")
-    if has_sensors and has_storage:
-        print("OK: Hardware page shows 'Sensors' and 'Storage' titles")
+
+    # Sensor rows: at least one line containing "°C" with a name.
+    sensor_lines = [lbl for lbl in hw_labels if "\u00b0C" in lbl]
+    if len(sensor_lines) < 1:
+        errors.append("FAIL: no sensor readings with \u00b0C visible")
+    else:
+        print(f"OK: {len(sensor_lines)} sensor \u00b0C readings visible")
+
+    # Storage card: filesystem mount points visible.
+    mount_lines = [lbl for lbl in hw_labels if lbl.startswith("/")]
+    if len(mount_lines) < 1:
+        errors.append("FAIL: no filesystem mount points visible in Storage card")
+    else:
+        print(f"OK: {len(mount_lines)} filesystem rows visible")
+
+    # Network card: interface names visible.
+    iface_names = ["eth0", "wlan0", "lo", "docker", "veth"]
+    iface_found = [lbl for lbl in hw_labels if any(n in lbl for n in iface_names)]
+    if len(iface_found) < 1:
+        errors.append("FAIL: no network interfaces visible in Network card")
+    else:
+        print(f"OK: {len(iface_found)} network interface rows visible")
+
+    # CPU card: per-core meters visible.
+    core_meter_count = 0
+    # Find the FlowBox (may be nested inside ScrolledWindow/Viewport).
+    flow = None
+    def _find_flowbox(w):
+        for c in w.get_children():
+            if isinstance(c, Gtk.FlowBox):
+                return c
+            found = _find_flowbox(c)
+            if found:
+                return found
+        return None
+    flow = _find_flowbox(win._hardware_page)
+    if flow:
+        for fbc in flow.get_children():
+            card = fbc.get_children()[0] if hasattr(fbc, "get_children") and fbc.get_children() else None
+            if card is None:
+                continue
+            body = card.get_children()[0]
+            title = body.get_children()[0] if body.get_children() else None
+            if isinstance(title, Gtk.Label) and title.get_text() == "CPU":
+                for child in body.get_children():
+                    if isinstance(child, Gtk.Grid):
+                        core_meter_count = sum(1 for m in child.get_children() if m.get_visible())
+    if core_meter_count < 2:
+        errors.append(f"FAIL: CPU card shows {core_meter_count} core meters (need >= 2)")
+    else:
+        print(f"OK: CPU card shows {core_meter_count} per-core meters")
+
+    # Window width must not exceed the default size.
+    width = win.get_allocated_width()
+    if width > 1400:
+        errors.append(f"FAIL: window width {width} > 1400")
+    else:
+        print(f"OK: window width {width} <= 1400")
 
     # --- Window height assertion ---
     height = win.get_allocated_height()

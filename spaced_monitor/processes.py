@@ -198,12 +198,10 @@ class ProcessSampler:
             return True
 
     def _is_kernel_thread(self, proc) -> bool:
-        """Kernel threads (pid 2, or no exe with ppid 2) are left out."""
-        if proc.pid == 2:
+        """Kernel threads (children of kthreadd, pid 2) are left out."""
+        if proc.pid in (1, 2):
             return True
-        if proc.ppid() == 2 and not self._has_exe(proc):
-            return True
-        return False
+        return proc.ppid() == 2
 
     def _io_delta(self, proc, pid: int) -> int:
         """Read+write bytes since the last sample; denied or missing -> 0."""
