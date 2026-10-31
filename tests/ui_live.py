@@ -224,6 +224,71 @@ def main() -> int:
     else:
         print(f"OK: window height {height} <= 900")
 
+    # --- Resize to small window ---
+    win._on_tab(None, "overview")
+    _pump(0.5)
+    win.resize(700, 450)
+    _pump(1.0)
+    path = str(SCREENSHOT_DIR / "live-overview-small.png")
+    if not _capture_window(win, path):
+        errors.append("FAIL: live-overview-small.png not captured")
+    else:
+        print(f"OK: {path} ({os.path.getsize(path)} bytes)")
+
+    # Overview Paned must fit within the window.
+    win_w = win.get_allocated_width()
+    win_h = win.get_allocated_height()
+    ov_a = win._overview.get_allocation()
+    if ov_a.x < 0 or ov_a.y < 0 or ov_a.x + ov_a.width > win_w or ov_a.y + ov_a.height > win_h:
+        errors.append(
+            f"FAIL: overview alloc {ov_a.x},{ov_a.y} "
+            f"{ov_a.width}x{ov_a.height} exceeds {win_w}x{win_h}")
+    else:
+        print(f"OK: overview fits at {win_w}x{win_h}")
+
+    # Gauges still drawn (allocation height > 0).
+    gauge_h = win._cpu_card._gauge.get_allocated_height()
+    if gauge_h < 1:
+        errors.append(f"FAIL: CPU gauge height {gauge_h} < 1")
+    else:
+        print(f"OK: CPU gauge height {gauge_h} at small size")
+
+    # Three sections inside Gtk.Paned.
+    if not isinstance(win._overview, Gtk.Paned):
+        errors.append("FAIL: overview is not a Gtk.Paned")
+    else:
+        print("OK: overview is Gtk.Paned")
+
+    # Theme button has an image child.
+    theme_btn_child = win._theme_btn.get_child()
+    has_image = isinstance(theme_btn_child, Gtk.Image)
+    if not has_image:
+        errors.append("FAIL: theme button has no image child")
+    else:
+        print("OK: theme button has image child")
+
+    # No label with text "S" in the top bar.
+    topbar_found = False
+    def _find_topbar(w):
+        for c in w.get_children():
+            ctx = c.get_style_context()
+            if "topbar" in ctx.list_classes():
+                return c
+            found = _find_topbar(c)
+            if found:
+                return found
+        return None
+    topbar = _find_topbar(win)
+    if topbar:
+        tb_labels = _visible_labels(topbar)
+        s_labels = [l for l in tb_labels if l.strip() == "S"]
+        if s_labels:
+            errors.append("FAIL: label 'S' found in top bar")
+        else:
+            print("OK: no 'S' label in top bar")
+    else:
+        errors.append("FAIL: topbar not found in widget tree")
+
     # Stop the worker.
     win._stop_event.set()
     win.close()

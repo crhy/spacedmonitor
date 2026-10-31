@@ -287,6 +287,15 @@ button.end-button:hover, button.end-button:active, button.end-button:focus {{
     color: {hot};
     font-weight: bold;
 }}
+paned > paned-handle {{
+    background-color: {b};
+    min-width: 4px;
+    min-height: 4px;
+    border: none;
+}}
+paned > paned-handle:hover {{
+    background-color: {gpu_blue};
+}}
 """
 
 
@@ -343,6 +352,10 @@ def load_settings(path: str | None = None) -> dict[str, object]:
     ms = data.get("refresh_ms")
     if isinstance(ms, (int, float)):
         result["refresh_ms"] = max(500, min(5000, int(ms)))
+    for key in ("pane_gauges", "pane_graphs", "pane_mid_h"):
+        val = data.get(key)
+        if isinstance(val, (int, float)) and 0.1 <= val <= 0.9:
+            result[key] = val
     return result
 
 

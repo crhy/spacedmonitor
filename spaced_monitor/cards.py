@@ -29,6 +29,7 @@ def _label(text: str, css_class: str = "value") -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class(css_class)
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 
@@ -37,6 +38,7 @@ def _muted(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("muted")
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 
@@ -45,6 +47,7 @@ def _big(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("big-value")
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 
@@ -53,6 +56,7 @@ def _title(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("card-title")
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 

@@ -20,6 +20,8 @@ from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
 from spaced_monitor.apptable import AppTable
 from spaced_monitor.pages import HardwarePage, ProcessesPage
 from spaced_monitor.collect import Sampler, Snapshot
+from spaced_monitor.panes import (load_pane_fractions, save_pane_fractions,
+                                   default_fractions)
 from spaced_monitor.processes import ProcessSampler
 
 
@@ -38,6 +40,7 @@ def _lbl(text: str, css: str = "value") -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class(css)
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 
@@ -46,6 +49,7 @@ def _muted(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("muted")
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 
@@ -54,6 +58,7 @@ def _big(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("big-value")
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 
@@ -62,6 +67,7 @@ def _title(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("card-title")
     lbl.set_xalign(0.0)
+    lbl.set_ellipsize(1)
     return lbl
 
 
@@ -110,7 +116,7 @@ class MonitorWindow(Gtk.Window):
         """Build the full window layout: bar, one visible page, footer."""
         root = _vbox(spacing=0)
         root.pack_start(self._build_topbar(), expand=False, fill=True, padding=0)
-        self._overview = self._build_cards()
+        self._overview = self._build_overview()
         self._processes_page = ProcessesPage(self._pal)
         self._hardware_page = HardwarePage(self._pal)
         self._pages = {"overview": self._overview,
@@ -124,12 +130,9 @@ class MonitorWindow(Gtk.Window):
         self.add(root)
 
     def _build_topbar(self) -> Gtk.Box:
-        """Top bar: logo, tabs, status, theme button."""
+        """Top bar: title, tabs, status, theme button."""
         bar = _hbox(spacing=12)
         bar.get_style_context().add_class("topbar")
-        logo = Gtk.Label(label="S")
-        logo.get_style_context().add_class("card-title")
-        bar.pack_start(logo, expand=False, fill=False, padding=0)
         name = Gtk.Label(label="Spaced Monitor")
         name.get_style_context().add_class("card-title")
         bar.pack_start(name, expand=False, fill=False, padding=0)
@@ -144,38 +147,106 @@ class MonitorWindow(Gtk.Window):
         bar.pack_start(tabs, expand=True, fill=False, padding=0)
         self._status_lbl = _muted("Updated just now")
         bar.pack_start(self._status_lbl, expand=False, fill=False, padding=0)
-        self._theme_btn = Gtk.Button(label="●")
+        self._theme_btn = Gtk.Button()
         self._theme_btn.set_size_request(28, 28)
         self._theme_btn.connect("clicked", self._on_theme_toggle)
+        self._update_theme_btn_icon()
         bar.pack_start(self._theme_btn, expand=False, fill=False, padding=0)
         return bar
 
-    def _build_cards(self) -> Gtk.ScrolledWindow:
-        """Middle of the page: gauge row, graph row, then the app table."""
-        col = _vbox(spacing=10)
-        gauges = _hbox(spacing=10)
+    def _update_theme_btn_icon(self) -> None:
+        """Set the theme button to a sun or moon icon for the current theme."""
+        is_dark = self._pal is theme_mod.DARK
+        if is_dark:
+            self._theme_btn.set_tooltip_text("Switch to light theme")
+            icon_name = "weather-clear-night-symbolic"
+        else:
+            self._theme_btn.set_tooltip_text("Switch to dark theme")
+            icon_name = "weather-clear-symbolic"
+        child = self._theme_btn.get_child()
+        if child:
+            self._theme_btn.remove(child)
+        img = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.SMALL_TOOLBAR)
+        self._theme_btn.add(img)
+
+    def _build_overview(self) -> Gtk.Paned:
+        """Overview page: three resizable sections via nested vertical Paned."""
         self._cpu_card = CpuCard(self._pal)
         self._gpu_card = GpuCard(self._pal)
         self._mem_card = MemoryCard(self._pal)
         self._gmem_card = GpuMemoryCard(self._pal)
-        for card in (self._cpu_card, self._gpu_card,
-                     self._mem_card, self._gmem_card):
-            gauges.pack_start(card, expand=True, fill=True, padding=0)
-        col.pack_start(gauges, expand=False, fill=True, padding=0)
-        graphs = _hbox(spacing=10)
         self._temp_card = TemperatureCard(self._pal)
         self._disk_card = DiskCard(self._pal)
         self._net_card = NetworkCard(self._pal)
-        graphs.pack_start(self._temp_card, expand=True, fill=True, padding=0)
-        graphs.pack_start(self._disk_card, expand=False, fill=True, padding=0)
-        graphs.pack_start(self._net_card, expand=False, fill=True, padding=0)
-        col.pack_start(graphs, expand=True, fill=True, padding=0)
         self._app_table = AppTable(self._pal)
-        col.pack_start(self._app_table, expand=False, fill=True, padding=0)
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.add(col)
-        return scrolled
+
+        gauges = Gtk.FlowBox()
+        gauges.set_max_children_per_line(4)
+        gauges.set_min_children_per_line(2)
+        gauges.set_selection_mode(Gtk.SelectionMode.NONE)
+        for card in (self._cpu_card, self._gpu_card,
+                     self._mem_card, self._gmem_card):
+            card.set_size_request(220, -1)
+            gauges.add(card)
+
+        graphs = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        graphs.pack1(self._temp_card, True, True)
+        disk_net = _hbox(spacing=10)
+        disk_net.pack_start(self._disk_card, expand=True, fill=True, padding=0)
+        disk_net.pack_start(self._net_card, expand=True, fill=True, padding=0)
+        graphs.pack2(disk_net, True, True)
+        self._paned_mid_h = graphs
+
+        inner = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        inner.pack1(graphs, True, True)
+        inner.pack2(self._app_table, True, True)
+        self._paned_inner = inner
+
+        outer = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        outer.pack1(gauges, False, True)
+        outer.pack2(inner, True, True)
+        self._paned_outer = outer
+
+        outer.connect("drag-end", self._on_pane_drag)
+        inner.connect("drag-end", self._on_pane_drag)
+        graphs.connect("drag-end", self._on_pane_drag)
+        return outer
+
+    def _restore_panes(self) -> None:
+        """Set Paned positions from saved fractions in settings."""
+        settings = theme_mod.load_settings()
+        fr = load_pane_fractions(settings)
+        self._pane_fracs = fr
+        ov_h = self._overview.get_allocated_height() or 900
+        self._paned_outer.set_position(int(fr["pane_gauges"] * ov_h))
+        inner_h = ov_h - self._paned_outer.get_position()
+        self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
+        ov_w = self._overview.get_allocated_width() or 1400
+        self._paned_mid_h.set_position(int(fr["pane_mid_h"] * ov_w))
+
+    def _on_pane_drag(self, paned, _handle, _is_reposition) -> None:
+        """Save pane fractions after the user stops dragging."""
+        GLib.timeout_add(300, self._do_save_panes)
+
+    def _do_save_panes(self) -> bool:
+        """Persist current pane positions as fractions."""
+        ov_h = self._overview.get_allocated_height()
+        ov_w = self._overview.get_allocated_width()
+        if ov_h < 1 or ov_w < 1:
+            return False
+        pos_g = self._paned_outer.get_position()
+        pos_i = self._paned_inner.get_position()
+        pos_m = self._paned_mid_h.get_position()
+        inner_h = ov_h - pos_g
+        fracs = {
+            "pane_gauges": pos_g / ov_h,
+            "pane_graphs": pos_i / inner_h if inner_h > 0 else 0.28,
+            "pane_mid_h": pos_m / ov_w,
+        }
+        settings = theme_mod.load_settings()
+        settings = save_pane_fractions(settings, fracs)
+        theme_mod.save_settings(settings)
+        return False
 
     def _build_footer(self) -> Gtk.Box:
         """Footer strip: four icon+text items split by thin border lines."""
@@ -306,6 +377,7 @@ class MonitorWindow(Gtk.Window):
         self._processes_page.set_palette(pal)
         self._hardware_page.set_palette(pal)
         self._show_tab()
+        self._update_theme_btn_icon()
         settings = theme_mod.load_settings()
         settings["theme"] = name
         theme_mod.save_settings(settings)
@@ -346,6 +418,7 @@ class MonitorApp(Gtk.Application):
         )
         self._window.show_all()
         self._window.show_tab_only()
+        self._window._restore_panes()
         self._window.start_worker()
         GLib.timeout_add(3000, self._tick_status)
 

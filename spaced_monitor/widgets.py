@@ -118,7 +118,7 @@ class Gauge(Gtk.DrawingArea):
         self._kind = kind
         self._pal = pal or DARK
         self._percent = 0.0
-        self.set_size_request(150, 120)
+        self.set_size_request(80, 60)
         self.connect("draw", self._on_draw)
 
     def set_percent(self, v: float) -> None:
@@ -403,7 +403,7 @@ class LineGraph(Gtk.DrawingArea):
         self._unit = unit
         self._seconds = max(1, int(seconds))
         self._series = [[c, []] for c in colors]
-        self.set_size_request(300, 160)
+        self.set_size_request(120, 60)
         self.connect("draw", self._on_draw)
 
     def push(self, values_per_series) -> None:
