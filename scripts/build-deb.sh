@@ -28,6 +28,9 @@ cp bin/spaced-monitor "$stage/usr/bin/spaced-monitor"
 chmod 0755 "$stage/usr/bin/spaced-monitor"
 
 # Desktop entry and icon.
+mkdir -p "$stage/usr/lib/udev/rules.d"
+cp packaging/60-spaced-monitor-rapl.rules "$stage/usr/lib/udev/rules.d/"
+install -m 0755 packaging/postinst "$stage/DEBIAN/postinst"
 mkdir -p "$stage/usr/share/applications"
 cp packaging/org.spacedlinux.Monitor.desktop "$stage/usr/share/applications/"
 mkdir -p "$stage/usr/share/icons/hicolor/scalable/apps"

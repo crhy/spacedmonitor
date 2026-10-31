@@ -1,0 +1,9 @@
+#!/bin/sh
+# Apply the RAPL read permission now; the udev rule covers later boots.
+set -e
+if [ "$1" = "configure" ]; then
+    for f in /sys/class/powercap/intel-rapl:*/energy_uj; do
+        [ -e "$f" ] && chmod 0444 "$f" || true
+    done
+fi
+exit 0

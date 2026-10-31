@@ -1,0 +1,4 @@
+# Spaced Monitor: let users read the CPU package energy counter (RAPL), as kernels did before 2020,
+# so the CPU power reading works without root. Trade-off: precise power readings are a theoretical
+# side channel (PLATYPUS); accepted for Spaced Linux desktops (rhY, 2026-10-31).
+ACTION=="add", SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", RUN+="/bin/chmod 0444 /sys%p/energy_uj"

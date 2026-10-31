@@ -34,6 +34,7 @@ class Packaging(unittest.TestCase):
         for need in ("usr/bin/spaced-monitor",
                      "usr/lib/spaced-monitor/spaced_monitor/app.py",
                      "usr/share/applications/org.spacedlinux.Monitor.desktop",
+                     "usr/lib/udev/rules.d/60-spaced-monitor-rapl.rules",
                      "usr/share/icons/hicolor/scalable/apps/org.spacedlinux.Monitor.svg",
                      "usr/share/doc/spaced-monitor/copyright"):
             self.assertIn(need, listing)
