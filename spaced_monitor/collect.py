@@ -326,8 +326,33 @@ def _gpu_name(raw: str) -> str:
     return raw.strip()
 
 
+def _nvml_gpu() -> Optional[GpuInfo]:
+    """Collect the GPU via NVML ctypes; None when NVML is unavailable."""
+    from spaced_monitor import nvml
+    if not nvml.available():
+        return None
+    name = nvml.device_name(0)
+    if name is None:
+        return None
+    pct = nvml.utilization(0)
+    temp = nvml.temperature(0)
+    power = nvml.power_usage(0)
+    mem_used, mem_total = nvml.memory_info(0)
+    return GpuInfo(
+        name=_gpu_name(name),
+        percent=pct,
+        temp_c=temp,
+        power_w=power,
+        mem_used=mem_used,
+        mem_total=mem_total,
+    )
+
+
 def nvidia_gpu(run: Callable = None) -> Optional[GpuInfo]:
-    """Collect the GPU from nvidia-smi; None when it is missing, fails or times out."""
+    """Collect the GPU: NVML first, nvidia-smi as fallback."""
+    info = _nvml_gpu()
+    if info:
+        return info
     if run is None:
         run = _default_run
     cmd = [
@@ -360,8 +385,23 @@ def _parse_nvidia(out: str) -> Optional[GpuInfo]:
     )
 
 
+def _nvml_extra() -> Optional[GpuExtra]:
+    """Driver version and PCIe link via NVML; None when NVML is unavailable."""
+    from spaced_monitor import nvml
+    if not nvml.available():
+        return None
+    driver = nvml.driver_version()
+    gen, width = nvml.pci_link(0)
+    if driver is None and gen is None:
+        return None
+    return GpuExtra(driver=driver, link_gen=gen, link_width=width)
+
+
 def nvidia_extra(run: Callable = None) -> Optional[GpuExtra]:
-    """Driver version and PCIe link from nvidia-smi; None when unavailable."""
+    """Driver version and PCIe link: NVML first, nvidia-smi as fallback."""
+    extra = _nvml_extra()
+    if extra:
+        return extra
     if run is None:
         run = _default_run
     cmd = [

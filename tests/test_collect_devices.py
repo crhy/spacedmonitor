@@ -32,6 +32,12 @@ class TestNvidia(unittest.TestCase):
 
     CSV = "NVIDIA GeForce RTX 4070 Ti SUPER, 97, 56, 160.53, 15684, 16376\n"
 
+    def setUp(self):
+        import unittest.mock
+        self._p = unittest.mock.patch("spaced_monitor.collect._nvml_gpu", return_value=None)
+        self._p.start()
+        self.addCleanup(self._p.stop)
+
     def test_normal(self):
         info = nvidia_gpu(run=lambda cmd, timeout=None: self.CSV)
         assert info == GpuInfo(
@@ -73,6 +79,12 @@ class TestNvidia(unittest.TestCase):
 
 class TestAmd(unittest.TestCase):
     """amd_gpu() reads the sysfs tree from a fixture directory."""
+
+    def setUp(self):
+        import unittest.mock
+        self._p = unittest.mock.patch("spaced_monitor.collect._nvml_gpu", return_value=None)
+        self._p.start()
+        self.addCleanup(self._p.stop)
 
     def _fixture(self, power_file="power1_average"):
         """Build build/-local drm tree: card0 has a GPU, card1 does not."""
@@ -253,6 +265,12 @@ class TestCpuPower(unittest.TestCase):
 
 class TestSnapshot(unittest.TestCase):
     """Sampler assembles a Snapshot from injected fakes."""
+
+    def setUp(self):
+        import unittest.mock
+        self._p = unittest.mock.patch("spaced_monitor.collect._nvml_gpu", return_value=None)
+        self._p.start()
+        self.addCleanup(self._p.stop)
 
     def _ps(self):
         """Fake psutil covering every collector used by Sampler."""

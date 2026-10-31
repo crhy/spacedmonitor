@@ -201,8 +201,27 @@ def _default_run(cmd: list, timeout: float = 2.0) -> str:
     return res.stdout
 
 
+def _nvml_gpu_mem() -> dict[int, int]:
+    """Per-pid GPU memory via NVML; empty dict when NVML is unavailable."""
+    from spaced_monitor import nvml
+    if not nvml.available():
+        return {}
+    return nvml.compute_processes(0)
+
+
+def _nvml_gpu_sm() -> dict[int, float]:
+    """Per-pid GPU SM utilisation via NVML; empty dict when NVML is unavailable."""
+    from spaced_monitor import nvml
+    if not nvml.available():
+        return {}
+    return nvml.process_utilization(0)
+
+
 def _gpu_mem_by_pid(run: Callable = None) -> dict[int, int]:
-    """Per-pid GPU memory in bytes from nvidia-smi compute-apps (MiB -> bytes)."""
+    """Per-pid GPU memory in bytes: NVML first, nvidia-smi compute-apps as fallback."""
+    result = _nvml_gpu_mem()
+    if result:
+        return result
     if run is None:
         run = _default_run
     cmd = ["nvidia-smi", "--query-compute-apps=pid,used_memory",
@@ -226,7 +245,10 @@ def _gpu_mem_by_pid(run: Callable = None) -> dict[int, int]:
 
 
 def _gpu_sm_by_pid(run: Callable = None) -> dict[int, float]:
-    """Per-pid GPU SM utilisation percent from nvidia-smi pmon ('-' -> 0)."""
+    """Per-pid GPU SM utilisation percent: NVML first, nvidia-smi pmon as fallback."""
+    result = _nvml_gpu_sm()
+    if result:
+        return result
     if run is None:
         run = _default_run
     cmd = ["nvidia-smi", "pmon", "-c", "1", "-s", "u"]

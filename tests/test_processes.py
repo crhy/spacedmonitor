@@ -118,6 +118,15 @@ def gpu_runner(pmon=PMON, compute=COMPUTE):
 
 
 class TestSampler(unittest.TestCase):
+    def setUp(self):
+        import unittest.mock
+        self._pm = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_mem", return_value={})
+        self._ps = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_sm", return_value={})
+        self._pm.start()
+        self._ps.start()
+        self.addCleanup(self._pm.stop)
+        self.addCleanup(self._ps.stop)
+
     def _sampler(self, procs, cpu_n=4, gpu_run=None, clock=None):
         return ProcessSampler(ps=FakePs(procs, cpu_n),
                               clock=clock or FakeClock(0.0),
@@ -211,6 +220,15 @@ class TestSampler(unittest.TestCase):
 
 
 class TestGpuParsing(unittest.TestCase):
+    def setUp(self):
+        import unittest.mock
+        self._pm = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_mem", return_value={})
+        self._ps = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_sm", return_value={})
+        self._pm.start()
+        self._ps.start()
+        self.addCleanup(self._pm.stop)
+        self.addCleanup(self._ps.stop)
+
     def test_mem_csv(self):
         out = _gpu_mem_by_pid(run=lambda cmd, timeout=None: "111, 2048\n222, 512\n")
         assert out == {111: 2048 * 1024 * 1024, 222: 512 * 1024 * 1024}
