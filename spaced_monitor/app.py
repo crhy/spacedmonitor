@@ -198,6 +198,10 @@ class MonitorWindow(Gtk.Window):
         self._tab = name
         self._show_tab()
 
+    def show_tab_only(self) -> None:
+        """After show_all(): hide every page but the selected one again."""
+        self._show_tab()
+
     def _show_tab(self) -> None:
         """Show one page at a time and mark its tab button as selected."""
         for key, page in self._pages.items():
@@ -220,19 +224,29 @@ class MonitorWindow(Gtk.Window):
         while not self._stop_event.is_set():
             try:
                 snap = self._sampler()
-            except Exception:
+            except Exception as exc:
                 snap = None
+                self._report_error("sampling", exc)
             if snap is not None:
                 GLib.idle_add(self._apply_snapshot, snap)
             if time.monotonic() - self._last_proc >= 2.0:
                 self._last_proc = time.monotonic()
                 try:
                     apps = self._proc_sampler()
-                except Exception:
+                except Exception as exc:
                     apps = None
+                    self._report_error("process sampling", exc)
                 if apps is not None:
                     GLib.idle_add(self._apply_apps, apps)
             self._stop_event.wait(self._refresh_ms / 1000.0)
+
+    def _report_error(self, what: str, exc: Exception) -> None:
+        """Print each distinct worker error once to stderr instead of swallowing it."""
+        key = f"{what}: {type(exc).__name__}: {exc}"
+        seen = self.__dict__.setdefault("_reported", set())
+        if key not in seen:
+            seen.add(key)
+            print(f"spaced-monitor: {key}", file=sys.stderr)
 
     def _apply_snapshot(self, snap: Snapshot) -> bool:
         """Apply a snapshot on the GTK thread; returns False to stop."""
@@ -326,7 +340,8 @@ class MonitorApp(Gtk.Application):
             refresh_ms=int(settings.get("refresh_ms", self._refresh_ms)),
             pal=pal,
         )
-        self._window.show()
+        self._window.show_all()
+        self._window.show_tab_only()
         self._window.start_worker()
         GLib.timeout_add(3000, self._tick_status)
 
@@ -344,7 +359,8 @@ class MonitorApp(Gtk.Application):
     def do_activate(self) -> None:  # type: ignore[override]
         """Bring the window forward; required or GTK quits after startup."""
         if self._window:
-            self._window.show()
+            self._window.show_all()
+            self._window.show_tab_only()
             self._window.grab_focus()
 
     def do_quit(self) -> None:  # type: ignore[override]
