@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -374,6 +375,19 @@ class MonitorApp(Gtk.Application):
         Gtk.Application.do_quit(self)
 
 
+def _display_problem() -> str:
+    """Explain why GTK cannot show a window, in terms the user can act on."""
+    disp = os.environ.get("DISPLAY")
+    way = os.environ.get("WAYLAND_DISPLAY")
+    if not disp and not way:
+        return ("no display connection: DISPLAY and WAYLAND_DISPLAY are both unset. "
+                "Run it from your desktop session (for example "
+                "DISPLAY=:0 spaced-monitor), or render it headless with xvfb-run.")
+    return (f"GTK cannot connect to the display (DISPLAY={disp or 'unset'}, "
+            f"WAYLAND_DISPLAY={way or 'unset'}). Check XAUTHORITY, or start the app "
+            "from the session that owns the screen.")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point: run the real application."""
     args = argv if argv is not None else sys.argv[1:]
@@ -381,6 +395,11 @@ def main(argv: list[str] | None = None) -> int:
         from spaced_monitor import __version__
         print(f"spaced-monitor {__version__}")
         return 0
+    # Fail with a sentence, not a GTK assertion dump: init_check() answers whether
+    # a display can be reached at all, and does not crash when it cannot.
+    if not Gtk.init_check()[0]:
+        print(f"spaced-monitor: {_display_problem()}", file=sys.stderr)
+        return 1
     sampler_obj = Sampler()
     app = MonitorApp(sampler=sampler_obj.sample)
     app.run(args)
