@@ -237,6 +237,12 @@ def _css_colour(colour: tuple[float, float, float]) -> str:
     return "#{:02x}{:02x}{:02x}".format(*(int(c * 255) for c in colour))
 
 
+def _num_css() -> str:
+    """Rules that let a number's font size follow the size of its card."""
+    return "".join(f".num-{n} {{\n    font-size: {n}px;\n}}\n"
+                   for n in range(12, 41))
+
+
 def css(pal: Palette) -> str:
     """Return GTK 3 CSS for the given palette."""
     w = _css_colour(pal.window)
@@ -312,6 +318,17 @@ combobox button {{
 .app-table {{
     padding: 8px 10px;
 }}
+/* Table rows alternate between the card colour and a slight shade of it.
+   Both come from the palette, so no theme gets a fixed navy band. */
+.row-even {{
+    background-color: {c};
+}}
+.row-odd {{
+    background-color: {_css_colour(_mix_towards(pal.card, pal.text, 0.055))};
+}}
+.row-even label, .row-odd label {{
+    background-color: transparent;
+}}
 .card-title {{
     font-weight: bold;
     font-size: 13px;
@@ -330,6 +347,7 @@ combobox button {{
     font-size: 13px;
     color: {t};
 }}
+{_num_css()}
 .tab-selected {{
     background-color: {rgba(pal.selected_bg, 0.40)};
     color: {sel};

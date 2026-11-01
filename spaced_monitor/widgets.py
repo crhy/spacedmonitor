@@ -14,6 +14,20 @@ from gi.repository import Gtk
 
 from spaced_monitor.theme import DARK, gradient
 
+_ICON_FALLBACK = "application-x-executable"
+
+
+def icon_image(icon: str, pixel: int = 16) -> Gtk.Image:
+    """Build the Gtk.Image for an app icon: theme name, file path, or fallback."""
+    if icon.startswith("/"):
+        img = Gtk.Image.new_from_file(icon)
+        img.set_pixel_size(pixel)
+        return img
+    if not icon or (icon != _ICON_FALLBACK
+                    and not Gtk.IconTheme.get_default().has_icon(icon)):
+        icon = _ICON_FALLBACK
+    return Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU)
+
 
 def _clamp(v: float | None, lo: float = 0.0, hi: float = 1.0) -> float:
     """Clamp a value into [lo, hi]; None becomes lo."""

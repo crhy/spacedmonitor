@@ -12,7 +12,7 @@ from spaced_monitor import theme as theme_mod
 from spaced_monitor.collect import Filesystem, GpuExtra, Interface, Temperature
 from spaced_monitor.processes import (AppUsage, ProcUsage, display_name,
                                       end_immediate, filter_apps)
-from spaced_monitor.widgets import Gauge, Meter, StackedBar
+from spaced_monitor.widgets import Gauge, Meter, StackedBar, icon_image
 
 # Columns the Processes page can sort by, in header order.
 SORT_COLUMNS = ("app", "cpu", "ram", "gpu", "disk")
@@ -329,12 +329,7 @@ class ProcessesPage(Gtk.Box):
             toggle.connect("clicked", self._on_expand, app)
             self._grid.attach(toggle, 1, row, 1, 1)
         icon_name = app.icon or "application-x-executable"
-        theme = Gtk.IconTheme.get_default()
-        if icon_name != "application-x-executable" and not theme.has_icon(icon_name):
-            icon_name = "application-x-executable"
-        icon = Gtk.Image.new_from_icon_name(
-            icon_name, Gtk.IconSize.MENU)
-        self._grid.attach(icon, 2, row, 1, 1)
+        self._grid.attach(icon_image(icon_name), 2, row, 1, 1)
         name = Gtk.Label(label=display_name(app.name, exe=app.exe, cmdline=app.cmdline))
         name.set_hexpand(True)
         name.set_xalign(0.0)

@@ -11,10 +11,26 @@ from spaced_monitor import format as fmt
 from spaced_monitor.pages import sort_apps, sort_indicator, meter_fraction
 from spaced_monitor.processes import (AppUsage, display_name, filter_apps,
                                       end_immediate)
-from spaced_monitor.widgets import Meter
+from spaced_monitor.widgets import Meter, icon_image
 
 _COLUMNS = ("cpu", "ram", "gpu", "disk")
 _COLUMN_TITLES = {"cpu": "CPU", "ram": "RAM", "gpu": "GPU", "disk": "Disk"}
+_GRID_COLUMNS = 11  # end, icon, name, then four value+meter pairs
+_HEADER_HEIGHT = 34  # the column-header row inside the scrolled grid
+_MIN_ROWS = 3        # rows the list must always keep visible
+_ROW_SPACING = 4     # Gtk.Grid row spacing
+_ROW_HEIGHT = 34     # one app row's own height, plus the spacing above it
+
+
+def _min_list_height() -> int:
+    """Height that keeps the column headers plus _MIN_ROWS app rows visible.
+
+    The grid stacks the header row, then rows separated by row spacing, so
+    the height has to count the spacing as well as the rows themselves.
+    """
+    return (_HEADER_HEIGHT + _ROW_SPACING
+            + _MIN_ROWS * _ROW_HEIGHT
+            + (_MIN_ROWS - 1) * _ROW_SPACING)
 
 
 def _hbox(spacing: int = 6) -> Gtk.Box:
@@ -88,6 +104,10 @@ class AppTable(Gtk.Box):
         self._scrolled = Gtk.ScrolledWindow()
         self._scrolled.set_policy(Gtk.PolicyType.NEVER,
                                   Gtk.PolicyType.AUTOMATIC)
+        # The list gives up height before the panes above it do, but never
+        # collapses to a stub: three rows plus the column headers stay on
+        # screen at every window size.
+        self._scrolled.set_size_request(-1, _min_list_height())
         self._grid = Gtk.Grid()
         self._grid.set_row_spacing(4)
         self._grid.set_column_spacing(6)
@@ -119,6 +139,16 @@ class AppTable(Gtk.Box):
         self._apps = self._visible()
         self._rebuild()
 
+    def set_palette(self, pal) -> None:
+        """Swap palette colours and rebuild rows so meters use the new ones.
+
+        Meters capture their palette when they are built, so a theme change
+        has to rebuild the rows; otherwise the tracks keep the navy of
+        whichever palette was active at startup.
+        """
+        self._pal = pal
+        self._rebuild()
+
     def _visible(self) -> list[AppUsage]:
         """Filter by search/scope then sort by the chosen column."""
         kept = filter_apps(self._all_apps, self._search_text, self._scope)
@@ -144,19 +174,22 @@ class AppTable(Gtk.Box):
         self._apply_meter_visibility()
 
     def _add_row(self, app: AppUsage, row: int) -> None:
-        """Attach one app row: end button, icon, name, value+meter pairs."""
+        """Attach one app row: end button, icon, name, value+meter pairs.
+
+        A full-width band behind the cells gives alternate rows a slight
+        shade of the card colour; the shade comes from the palette.
+        """
+        band = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        band.get_style_context().add_class(
+            "row-odd" if row % 2 else "row-even")
+        self._grid.attach(band, 0, row, _GRID_COLUMNS, 1)
         btn = Gtk.Button(label="\u2715")
         btn.get_style_context().add_class("end-button")
         btn.set_tooltip_text("End this app")
         btn.connect("clicked", self._on_end, app)
         self._grid.attach(btn, 0, row, 1, 1)
         icon_name = app.icon or "application-x-executable"
-        theme = Gtk.IconTheme.get_default()
-        if icon_name != "application-x-executable" and not theme.has_icon(icon_name):
-            icon_name = "application-x-executable"
-        icon = Gtk.Image.new_from_icon_name(
-            icon_name, Gtk.IconSize.MENU)
-        self._grid.attach(icon, 1, row, 1, 1)
+        self._grid.attach(icon_image(icon_name), 1, row, 1, 1)
         name = _value(display_name(app.name, exe=app.exe, cmdline=app.cmdline))
         name.set_hexpand(True)
         name.set_xalign(0.0)

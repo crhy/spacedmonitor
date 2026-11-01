@@ -116,6 +116,34 @@ def _find_col_headers(app_table: Gtk.Box) -> dict:
     return headers
 
 
+def _rows_in_view(app_table: Gtk.Box) -> int:
+    """Count app rows whose name label sits inside the scrolled view.
+
+    Meters are hidden in narrow windows, so the name labels (the only
+    hexpand labels in the grid) are the reliable row marker.
+    """
+    sw = _find_scrolled_window(app_table)
+    if sw is None:
+        return 0
+    grid = sw.get_child()
+    if not isinstance(grid, Gtk.Grid):
+        children = grid.get_children() if hasattr(grid, "get_children") else []
+        if children:
+            grid = children[0]
+    if not isinstance(grid, Gtk.Grid):
+        return 0
+    view = sw.get_allocation()
+    seen: set[int] = set()
+    for child in grid.get_children():
+        if not (isinstance(child, Gtk.Label) and child.get_hexpand()):
+            continue
+        a = child.get_allocation()
+        if (a.height > 0 and a.y >= view.y
+                and a.y + a.height <= view.y + view.height):
+            seen.add(a.y)
+    return len(seen)
+
+
 def main() -> int:
     """Build the real window, test layout at four sizes."""
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -132,6 +160,7 @@ def main() -> int:
     _pump(3.0)
 
     errors = []
+    gauge_widths: dict[tuple[int, int], int] = {}
 
     for w, h in SIZES:
         win._on_tab(None, "overview")
@@ -223,6 +252,40 @@ def main() -> int:
                 f"but NVIDIA GPU is present")
         elif has_nv:
             print(f"OK: {w}x{h} GPU memory text: '{gmem_text}'")
+
+        # (f) The middle pane is never squeezed away: at the smallest
+        #     window the temperature card keeps its title and its 40px
+        #     graph, and the process list still shows at least three rows.
+        if (w, h) == (620, 420):
+            temp_alloc = win._temp_card.get_allocation()
+            graph_alloc = win._temp_card._graph.get_allocation()
+            if graph_alloc.height < 40:
+                errors.append(
+                    f"FAIL: {w}x{h} temperature graph only "
+                    f"{graph_alloc.height}px tall")
+            if not _inside(temp_alloc, win_alloc):
+                errors.append(
+                    f"FAIL: {w}x{h} temperature card not inside window")
+            rows = _rows_in_view(win._app_table)
+            if rows < 3:
+                errors.append(
+                    f"FAIL: {w}x{h} process list shows only {rows} rows")
+            else:
+                print(f"OK: {w}x{h} process list rows: {rows}")
+
+        # (g) Gauges scale with their card: the 1920x1040 gauge must be
+        #     at least 1.6x the 1000x700 gauge, not a fixed 50px circle.
+        gauge_alloc = win._cpu_card._gauge.get_allocation()
+        gauge_widths[(w, h)] = gauge_alloc.width
+        if (w, h) == (1920, 1040):
+            base = gauge_widths.get((1000, 700))
+            if base and gauge_alloc.width < 1.6 * base:
+                errors.append(
+                    f"FAIL: {w}x{h} gauge {gauge_alloc.width}px vs "
+                    f"1000x700 gauge {base}px (need 1.6x)")
+            else:
+                print(f"OK: {w}x{h} gauge {gauge_alloc.width}px "
+                      f"(1000x700: {base}px)")
 
     # Stop the worker.
     win._stop_event.set()

@@ -119,21 +119,113 @@ _ICON_DIRS = (
     "/var/lib/flatpak/exports/share/applications",
     os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
 )
+# hicolor roots whose apps/ subdir holds icons a name can resolve against.
+_ICON_ROOTS = (
+    "/usr/share/icons/hicolor",
+    os.path.expanduser("~/.local/share/icons/hicolor"),
+    "/var/lib/flatpak/exports/share/icons/hicolor",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/icons/hicolor"),
+)
+_ICON_SIZES = ("scalable", "512x512", "256x256", "128x128", "64x64", "48x48",
+               "32x32")
+# Process names whose .desktop file is filed under a different id.
+_KNOWN_ICONS = {
+    "brave": "com.brave.Browser",
+    "brave-browser": "com.brave.Browser",
+    "codium": "com.vscodium.codium",
+    "code": "com.vscodium.codium",
+    "obs": "com.obsproject.Studio",
+    "obs-studio": "com.obsproject.Studio",
+    "gimp-2.10": "org.gimp.GIMP",
+    "gimp": "org.gimp.GIMP",
+    "kdenlive": "org.kde.kdenlive",
+    "qbittorrent": "org.qbittorrent.qBittorrent",
+    "dolphin-emu": "org.DolphinEmu.dolphin-emu",
+    "freecad": "org.freecad.FreeCAD",
+    "openshot-qt": "org.openshot.OpenShot",
+    "upscayl": "org.upscayl.Upscayl",
+    "bottles": "com.usebottles.bottles",
+    "flatpak-seal": "com.github.tchx84.Flatseal",
+    "xorg": "video-display",
+    "xorg-server": "video-display",
+    "pulseaudio": "audio-x-generic",
+    "pipewire": "audio-x-generic",
+    # Daemons have no .desktop file; these names are the standard ones for
+    # what the process actually does. A theme without the icon falls back.
+    "cupsd": "printer",
+    "at-spi-bus-launcher": "printer",
+    "at-spi2-registryd": "printer",
+    "bluetoothd": "bluetooth",
+    "avahi-daemon": "network-manager",
+    "dbus-daemon": "system-run",
+    "dbus-launch": "system-run",
+    "cron": "system-run",
+    "chronyd": "system-run",
+    "gnome-keyring-daemon": "dialog-password",
+    "polkitd": "dialog-password",
+    "ssh-agent": "dialog-password",
+    "networkmanager": "network-manager",
+}
 _icon_cache: dict[str, str] = {}
 
 
 def _read_desktop(path: str) -> dict:
-    """Parse the Exec, StartupWMClass and Icon keys from a .desktop file."""
+    """Parse the Exec, StartupWMClass, Name, Icon and Part-Of keys."""
     out = {}
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
-                for key in ("Exec", "StartupWMClass", "Icon"):
+                for key in ("Exec", "StartupWMClass", "Name", "Icon",
+                            "X-Flatpak-Part-Of"):
                     if line.startswith(f"{key}="):
                         out[key] = line[len(key) + 1:].strip()
     except OSError:
         return out
     return out
+
+
+def _icon_name_exists(name: str) -> bool:
+    """True when a hicolor root carries an apps icon called name."""
+    if not name or name.startswith("/"):
+        return False
+    for root in _ICON_ROOTS:
+        for size in _ICON_SIZES:
+            for ext in (".svg", ".png"):
+                if os.path.exists(os.path.join(root, size, "apps",
+                                                name + ext)):
+                    return True
+    return False
+
+
+def _resolve_icon(value: str) -> str:
+    """Turn a .desktop Icon value into a theme name or a loadable path."""
+    if not value:
+        return _ICON_FALLBACK
+    if value.startswith("/"):
+        base = os.path.splitext(os.path.basename(value))[0]
+        if _icon_name_exists(base):
+            return base
+        return value if os.path.exists(value) else _ICON_FALLBACK
+    if _icon_name_exists(value) or "/" not in value:
+        return value
+    return _ICON_FALLBACK
+
+
+def _flatpak_icon_dir(app_id: str) -> str:
+    """First icon file inside a Flatpak app's own icon dir."""
+    if not app_id:
+        return ""
+    root = os.path.join(os.path.expanduser(f"~/.var/app/{app_id}"),
+                        "data", "icons", "hicolor")
+    for size in _ICON_SIZES:
+        apps = os.path.join(root, size, "apps")
+        try:
+            for fn in sorted(os.listdir(apps)):
+                if fn.endswith((".svg", ".png")):
+                    return os.path.join(apps, fn)
+        except OSError:
+            continue
+    return ""
 
 
 def _flatpak_app_id(pid: int) -> str:
@@ -162,14 +254,20 @@ def _flatpak_app_id(pid: int) -> str:
 
 def icon_for(name: str, dirs: Sequence[str] = _ICON_DIRS,
              exe: str = "", pid: int = 0) -> str:
-    """Find a matching .desktop Icon for a process; cached."""
+    """Find an icon for a process: .desktop Icon, Flatpak id, known name, fallback.
+
+    The result is either an icon-theme name or an absolute path to an image file.
+    """
     if name in _icon_cache:
         return _icon_cache[name]
     target = name.lower()
     exe_base = os.path.basename(exe).lower() if exe else ""
-    # Flatpak: try the app id as an additional target.
     fpk_id = _flatpak_app_id(pid) if pid else ""
     targets = {t for t in (target, exe_base, fpk_id.lower()) if t}
+    known = _KNOWN_ICONS.get(target) or _KNOWN_ICONS.get(exe_base)
+    if known:
+        targets.add(known.lower())
+    unverified = ""
     for d in dirs:
         try:
             entries = os.listdir(d)
@@ -186,11 +284,28 @@ def icon_for(name: str, dirs: Sequence[str] = _ICON_DIRS,
                 exec_base = os.path.basename(
                     keys["Exec"].split()[0]).lower()
             wm = keys.get("StartupWMClass", "").lower()
-            hits = {stem, stem_clean, exec_base, wm} & targets
-            if hits:
-                icon = keys.get("Icon") or _ICON_FALLBACK
-                _icon_cache[name] = icon
-                return icon
+            part = keys.get("X-Flatpak-Part-Of", "").lower()
+            disp = keys.get("Name", "").lower().replace(" ", "")
+            hits = {stem, stem_clean, exec_base, wm, part, disp} & targets
+            if not hits:
+                continue
+            icon = _resolve_icon(keys.get("Icon", ""))
+            if icon != _ICON_FALLBACK:
+                if icon.startswith("/") or _icon_name_exists(icon):
+                    _icon_cache[name] = icon
+                    return icon
+                unverified = unverified or icon
+    if fpk_id:
+        own = _flatpak_icon_dir(fpk_id)
+        if own:
+            _icon_cache[name] = own
+            return own
+    if unverified:
+        _icon_cache[name] = unverified
+        return unverified
+    if known:
+        _icon_cache[name] = known
+        return known
     _icon_cache[name] = _ICON_FALLBACK
     return _ICON_FALLBACK
 

@@ -11,6 +11,7 @@ Run from scripts/check.sh after ui_live.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -52,8 +53,11 @@ def _contrast_ratio(lum1: float, lum2: float) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def _capture(theme: str, out_path: Path) -> bool:
-    """Spawn a subprocess with GTK_THEME and xvfb, capture screenshot."""
+def _capture(theme: str, out_path: Path) -> dict | None:
+    """Spawn a subprocess with GTK_THEME and xvfb, capture screenshot.
+
+    Returns the palette samples the helper printed, or None on failure.
+    """
     env = os.environ.copy()
     env["GTK_THEME"] = theme
     cmd = [
@@ -64,8 +68,13 @@ def _capture(theme: str, out_path: Path) -> bool:
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         print(f"  subprocess stderr: {result.stderr[:200]}", file=sys.stderr)
-        return False
-    return out_path.exists() and out_path.stat().st_size > 1024
+        return None
+    if not (out_path.exists() and out_path.stat().st_size > 1024):
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("SAMPLE "):
+            return json.loads(line[len("SAMPLE "):])
+    return None
 
 
 def _check_background(img: Image.Image, expected_rgb: tuple) -> bool:
@@ -135,6 +144,35 @@ def _check_text_contrast(img: Image.Image, theme: str) -> bool:
     return False
 
 
+def _within(sample: list[int], family: list[int], tol: int = 40) -> bool:
+    """True when every channel of the sample is within tol of the family colour.
+
+    The family is the theme's own bg/base colours, so a theme that really is
+    navy (Spaced-Win11-Dark) still passes while a navy widget in a light
+    theme does not.
+    """
+    return all(abs(a - b) <= tol for a, b in zip(sample, family))
+
+
+def _check_samples(samples: dict) -> list[str]:
+    """Check meter tracks and table row backgrounds follow the desktop theme."""
+    problems: list[str] = []
+    family = [c for c in (samples.get("theme_bg"), samples.get("theme_base"))
+              if c]
+    if not family:
+        return ["no theme bg/base reported"]
+    for key in ("meter_track", "row_band", "table_bg"):
+        sample = samples.get(key)
+        if not sample:
+            problems.append(f"{key} not sampled")
+            continue
+        if not any(_within(sample, f) for f in family):
+            problems.append(
+                f"{key} {tuple(sample)} off-theme "
+                f"(family {tuple(family[0])})")
+    return problems
+
+
 def main() -> int:
     """Run the theme tests."""
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -144,7 +182,8 @@ def main() -> int:
         out_path = SCREENSHOT_DIR / f"theme-{theme_name}.png"
         print(f"Testing {theme_name}...", end=" ", flush=True)
 
-        if not _capture(theme_name, out_path):
+        samples = _capture(theme_name, out_path)
+        if samples is None:
             errors.append(f"FAIL: {theme_name} screenshot not captured")
             print("FAIL (capture)")
             continue
@@ -164,7 +203,15 @@ def main() -> int:
             errors.append(f"FAIL: {theme_name} text contrast too low")
             print("FAIL (contrast)")
         else:
-            print("contrast OK")
+            print("contrast OK", end=" ")
+
+        # (c) Meter tracks and row backgrounds must follow the theme
+        problems = _check_samples(samples)
+        if problems:
+            errors.extend(f"FAIL: {theme_name} {p}" for p in problems)
+            print("FAIL (palette)")
+        else:
+            print("palette OK")
 
     if errors:
         for e in errors:

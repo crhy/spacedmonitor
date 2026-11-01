@@ -121,10 +121,10 @@ class MonitorWindow(Gtk.Window):
         """Build the full window layout: bar, one visible page, footer."""
         root = _vbox(spacing=0)
         root.pack_start(self._build_topbar(), expand=False, fill=True, padding=0)
-        self._overview = self._build_overview()
+        overview_page = self._build_overview()
         self._processes_page = ProcessesPage(self._pal)
         self._hardware_page = HardwarePage(self._pal)
-        self._pages = {"overview": self._overview,
+        self._pages = {"overview": overview_page,
                        "processes": self._processes_page,
                        "hardware": self._hardware_page}
         for page in self._pages.values():
@@ -160,22 +160,36 @@ class MonitorWindow(Gtk.Window):
         return bar
 
     def _update_theme_btn_icon(self) -> None:
-        """Set the theme button to a sun or moon icon for the current theme."""
+        """Set the theme button to a sun or moon icon for the current theme.
+
+        Not every GTK theme ships weather-clear-symbolic, so when the icon
+        is missing the button falls back to the matching text glyph instead
+        of showing a blank button.
+        """
         is_dark = theme_mod._relative_luminance(self._pal.window) < 0.5
         if is_dark:
             self._theme_btn.set_tooltip_text("Switch to light theme")
             icon_name = "weather-clear-night-symbolic"
+            glyph = "\u2641"  # waning crescent moon
         else:
             self._theme_btn.set_tooltip_text("Switch to dark theme")
             icon_name = "weather-clear-symbolic"
-        child = self._theme_btn.get_child()
-        if child:
-            self._theme_btn.remove(child)
-        img = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.SMALL_TOOLBAR)
-        self._theme_btn.add(img)
+            glyph = "\u2609"  # sun
+        if Gtk.IconTheme.get_default().has_icon(icon_name):
+            self._theme_btn.set_label("")
+            self._theme_btn.set_image(Gtk.Image.new_from_icon_name(
+                icon_name, Gtk.IconSize.SMALL_TOOLBAR))
+        else:
+            self._theme_btn.set_label(glyph)
+            self._theme_btn.set_image(None)
 
-    def _build_overview(self) -> Gtk.Paned:
-        """Overview page: three resizable sections via nested vertical Paned."""
+    def _build_overview(self) -> Gtk.Box:
+        """Overview page: three resizable sections via nested vertical Paned.
+
+        The page itself is a Box carrying the .page class, which is what puts
+        a strip of the window background around the cards; a Paned ignores
+        padding, so it sits inside that Box rather than being the page.
+        """
         self._cpu_card = CpuCard(self._pal)
         self._gpu_card = GpuCard(self._pal)
         self._mem_card = MemoryCard(self._pal)
@@ -199,7 +213,9 @@ class MonitorWindow(Gtk.Window):
         self._paned_mid_h = graphs
 
         inner = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        inner.pack1(graphs, True, True)
+        # The middle row keeps its own minimum (title plus a readable graph);
+        # the app list below is what gives up height instead.
+        inner.pack1(graphs, True, False)
         inner.pack2(self._app_table, True, True)
         self._paned_inner = inner
 
@@ -212,7 +228,11 @@ class MonitorWindow(Gtk.Window):
         inner.connect("drag-end", self._on_pane_drag)
         graphs.connect("drag-end", self._on_pane_drag)
         outer.connect("size-allocate", self._on_overview_resize)
-        return outer
+        self._overview = outer
+        page = _vbox(spacing=0)
+        page.get_style_context().add_class("page")
+        page.pack_start(outer, True, True, 0)
+        return page
 
     def _restore_panes(self) -> None:
         """Set Paned positions from saved fractions in settings."""
@@ -443,6 +463,7 @@ class MonitorWindow(Gtk.Window):
             card.set_palette(pal)
         self._processes_page.set_palette(pal)
         self._hardware_page.set_palette(pal)
+        self._app_table.set_palette(pal)
         self._show_tab()
         self._update_theme_btn_icon()
 
