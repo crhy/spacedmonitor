@@ -4,7 +4,7 @@ The system monitor for Spaced Linux: CPU, GPU, memory, temperatures, disks, netw
 the programs using them, in one window that is easy to read at a glance. Rich colours on
 the gauges, clear temperature graphs, dark and light themes.
 
-Status: released ([v0.1.0](https://github.com/crhy/spacedmonitor/releases/tag/v0.1.0)).
+Status: released ([v0.1.1](https://github.com/crhy/spacedmonitor/releases/tag/v0.1.1)).
 Further work is tracked in [crhy/spaced#385](https://github.com/crhy/spaced/issues/385).
 
 ![Overview mockup](docs/mockup-overview.png)
@@ -25,8 +25,8 @@ APT repository comes later. No systemd. GPL-3.0-or-later.
 Download the prebuilt package from the latest release, then install it with apt:
 
 ```sh
-curl -LO https://github.com/crhy/spacedmonitor/releases/latest/download/spaced-monitor_0.1.0_all.deb
-sudo apt install ./spaced-monitor_0.1.0_all.deb
+curl -LO https://github.com/crhy/spacedmonitor/releases/latest/download/spaced-monitor_0.1.1_all.deb
+sudo apt install ./spaced-monitor_0.1.1_all.deb
 ```
 
 Or build it yourself (see Build below) and install that:
