@@ -35,6 +35,7 @@ cp packaging/org.spacedlinux.Monitor.svg "$stage/usr/share/icons/hicolor/scalabl
 
 # Copyright notice.
 mkdir -p "$stage/usr/share/doc/${pkg}"
+cp LICENSE "$stage/usr/share/doc/${pkg}/LICENSE"
 cat > "$stage/usr/share/doc/${pkg}/copyright" <<'EOF'
 Format: GPL-3.0-or-later
 
@@ -59,12 +60,19 @@ Architecture: all
 Section: utils
 Priority: optional
 Maintainer: Spaced Linux Team
-Depends: python3, python3-gi, gir1.2-gtk-3.0, python3-psutil
+Depends: python3, python3-gi, gir1.2-gtk-3.0, python3-cairo, python3-psutil
+Recommends: iproute2
+Homepage: https://github.com/crhy/spacedmonitor
 Description: See what your computer is doing
  A system monitor for Spaced Linux: CPU, GPU, memory and GPU-memory
  gauges, temperature graphs, disk and network activity, and the programs
  using them, in one easy-to-read GTK 3 window. No systemd.
 EOF
+
+# Modes: directories 755, data files 644, launcher 755 (cp keeps source group bits).
+find "$stage" -type d -exec chmod 0755 {} +
+find "$stage" -type f -exec chmod 0644 {} +
+chmod 0755 "$stage/usr/bin/${pkg}"
 
 dpkg-deb --root-owner-group --build "$stage" "$deb"
 echo "built: $deb"
