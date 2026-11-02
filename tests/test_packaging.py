@@ -36,7 +36,8 @@ class Packaging(unittest.TestCase):
                      "usr/share/applications/org.spacedlinux.Monitor.desktop",
                      "usr/lib/udev/rules.d/60-spaced-monitor-rapl.rules",
                      "usr/share/icons/hicolor/scalable/apps/org.spacedlinux.Monitor.svg",
-                     "usr/share/doc/spaced-monitor/copyright"):
+                     "usr/share/doc/spaced-monitor/copyright",
+                     "usr/share/doc/spaced-monitor/LICENSE"):
             self.assertIn(need, listing)
         self.assertNotIn("__pycache__", listing)
         self.assertNotIn("tests/", listing)
@@ -47,15 +48,34 @@ class Packaging(unittest.TestCase):
 
     def test_depends(self):
         deps = self._dpkg("-f", str(self.deb), "Depends")
-        for dep in ("python3", "python3-gi", "gir1.2-gtk-3.0", "python3-psutil"):
+        for dep in ("python3", "python3-gi", "gir1.2-gtk-3.0", "python3-cairo",
+                    "python3-psutil"):
             self.assertIn(dep, deps)
+        self.assertNotIn("systemd", deps)
+
+    def test_no_writable_modes(self):
+        listing = self._dpkg("-c", str(self.deb))
+        for line in listing.splitlines():
+            mode = line.split()[0]
+            if mode.startswith("d"):
+                self.assertEqual(mode, "drwxr-xr-x", line)
+            else:
+                self.assertFalse(mode[5] == "w", f"group-writable: {line}")
 
     def test_launcher_version(self):
         launcher = self.stage / "usr" / "bin" / "spaced-monitor"
         out = subprocess.run([str(launcher), "--version"], cwd=str(ROOT),
                              timeout=60, text=True,
-                             stdout=subprocess.PIPE).stdout
-        self.assertEqual(out.strip(), f"spaced-monitor {self.version}")
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertEqual(out.stdout.strip(), f"spaced-monitor {self.version}")
+
+    def test_launcher_leaves_no_bytecode_behind(self):
+        launcher = self.stage / "usr" / "bin" / "spaced-monitor"
+        subprocess.run([str(launcher), "--version"], cwd=str(ROOT),
+                       timeout=60, check=True, stdout=subprocess.PIPE)
+        left = list((self.stage / "usr" / "lib" / "spaced-monitor").rglob("__pycache__"))
+        self.assertEqual(left, [], f"launcher wrote bytecode into the prefix: {left}")
 
 
 if __name__ == "__main__":
