@@ -76,6 +76,7 @@ EOF
 find "$stage" -type d -exec chmod 0755 {} +
 find "$stage" -type f -exec chmod 0644 {} +
 chmod 0755 "$stage/usr/bin/${pkg}"
+for s in postinst prerm postrm preinst; do [ -f "$stage/DEBIAN/$s" ] && chmod 0755 "$stage/DEBIAN/$s"; done
 
 dpkg-deb --root-owner-group --build "$stage" "$deb"
 echo "built: $deb"

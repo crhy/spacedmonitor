@@ -557,7 +557,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     # Fail with a sentence, not a GTK assertion dump: init_check() answers whether
     # a display can be reached at all, and does not crash when it cannot.
-    if not Gtk.init_check()[0]:
+    # With neither variable set there is no display to reach, even if GTK was
+    # already initialised earlier in this process.
+    no_env = not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+    if no_env or not Gtk.init_check()[0]:
         print(f"spaced-monitor: {_display_problem()}", file=sys.stderr)
         return 1
     sampler_obj = Sampler()

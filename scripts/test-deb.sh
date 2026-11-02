@@ -20,12 +20,17 @@ trap 'rm -rf "$tmp"' EXIT
 [ -f "$deb" ] || bash scripts/build-deb.sh >/dev/null
 ok "using $deb ($(wc -c < "$deb") bytes)"
 
-# --- 1. No maintainer scripts: extracting the package IS installing it. ---
+# --- 1. Maintainer scripts: only the reviewed RAPL postinst (chmod 0444 on energy_uj). ---
 mkdir "$tmp/ctrl"
 dpkg-deb -e "$deb" "$tmp/ctrl"
-scripts=$(find "$tmp/ctrl" -type f -not -name control | grep -c . || true)
-[ "$scripts" -eq 0 ] || fail "maintainer scripts present: no postinst/prerm allowed"
-ok "no maintainer scripts"
+extra=$(find "$tmp/ctrl" -type f -not -name control -not -name postinst -not -name md5sums | grep -c . || true)
+[ "$extra" -eq 0 ] || fail "unexpected maintainer scripts: only the RAPL postinst is allowed"
+if [ -f "$tmp/ctrl/postinst" ]; then
+    cmp -s "$tmp/ctrl/postinst" packaging/postinst || fail "postinst differs from packaging/postinst"
+    ok "postinst is the reviewed RAPL permission script"
+else
+    ok "no maintainer scripts"
+fi
 
 # --- 2. Layout: everything the launcher and the desktop entry need is inside. ---
 listing=$(dpkg-deb -c "$deb")
