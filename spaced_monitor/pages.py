@@ -194,7 +194,14 @@ def _title_label(text: str) -> Gtk.Label:
 
 
 def _value(text: str) -> Gtk.Label:
-    """Value label, left aligned."""
+    """Value label, left aligned.
+
+    Deliberately not ellipsised: an ellipsisable label reports a tiny minimum
+    width, so Gtk.Grid squeezes those columns below their natural width and
+    every number in the table was cut to "1…" / "5.…" at narrow window
+    sizes.  Keeping the full text as the minimum makes the scrolled table
+    scroll sideways instead, and the name column absorbs the squeeze.
+    """
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("value")
     lbl.set_xalign(0.0)
@@ -202,7 +209,7 @@ def _value(text: str) -> Gtk.Label:
 
 
 def _big_value(text: str) -> Gtk.Label:
-    """Big-value label, left aligned."""
+    """Big-value label, left aligned (see _value on ellipsis)."""
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("big-value")
     lbl.set_xalign(0.0)
@@ -270,6 +277,11 @@ class ProcessesPage(Gtk.Box):
         self._scrolled = Gtk.ScrolledWindow()
         self._scrolled.set_policy(Gtk.PolicyType.AUTOMATIC,
                                   Gtk.PolicyType.AUTOMATIC)
+        # The grid's minimum width is the sum of its columns' minimums, so
+        # with un-ellipsisable value labels the table refuses to shrink below
+        # its natural width: the viewport scrolls sideways instead of crushing
+        # columns at narrow window sizes.
+        self._scrolled.set_propagate_natural_width(True)
         self._grid = Gtk.Grid()
         self._grid.set_row_spacing(2)
         self._grid.set_column_spacing(8)

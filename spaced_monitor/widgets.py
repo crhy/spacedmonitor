@@ -10,9 +10,16 @@ import cairo
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk
+gi.require_version("Pango", "1.0")
+from gi.repository import Gtk, Pango
 
 from spaced_monitor.theme import DARK, gradient
+
+# Every label in this app is left aligned, so a clipped label must lose its
+# tail, never its head: "StrataMixi…", not "…StrataMixing".  Note that Pango
+# numbers these modes NONE=0 START=1 MIDDLE=2 END=3, so the bare integer 1
+# silently means START rather than END.
+ELLIPSIZE_END = Pango.EllipsizeMode.END
 
 
 def _clamp(v: float | None, lo: float = 0.0, hi: float = 1.0) -> float:

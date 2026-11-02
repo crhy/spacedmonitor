@@ -11,7 +11,7 @@ from spaced_monitor import format as fmt
 from spaced_monitor.pages import sort_apps, sort_indicator, meter_fraction
 from spaced_monitor.processes import (AppUsage, display_name, filter_apps,
                                       end_immediate)
-from spaced_monitor.widgets import Meter
+from spaced_monitor.widgets import ELLIPSIZE_END, Meter
 
 _COLUMNS = ("cpu", "ram", "gpu", "disk")
 _COLUMN_TITLES = {"cpu": "CPU", "ram": "RAM", "gpu": "GPU", "disk": "Disk"}
@@ -160,7 +160,7 @@ class AppTable(Gtk.Box):
         name = _value(display_name(app.name, exe=app.exe, cmdline=app.cmdline))
         name.set_hexpand(True)
         name.set_xalign(0.0)
-        name.set_ellipsize(1)
+        name.set_ellipsize(ELLIPSIZE_END)
         self._grid.attach(name, 2, row, 1, 1)
         colours = (self._pal.cpu_start, self._pal.ram_start,
                    self._pal.gpu_memory_start, self._pal.disk_read)

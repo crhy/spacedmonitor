@@ -19,6 +19,7 @@ from spaced_monitor import format as fmt
 from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
                                   TemperatureCard, DiskCard, NetworkCard)
 from spaced_monitor.apptable import AppTable
+from spaced_monitor.widgets import ELLIPSIZE_END
 from spaced_monitor.pages import HardwarePage, ProcessesPage
 from spaced_monitor.collect import Sampler, Snapshot
 from spaced_monitor.panes import (load_pane_fractions, save_pane_fractions,
@@ -41,7 +42,7 @@ def _lbl(text: str, css: str = "value") -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class(css)
     lbl.set_xalign(0.0)
-    lbl.set_ellipsize(1)
+    lbl.set_ellipsize(ELLIPSIZE_END)
     return lbl
 
 
@@ -50,7 +51,7 @@ def _muted(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("muted")
     lbl.set_xalign(0.0)
-    lbl.set_ellipsize(1)
+    lbl.set_ellipsize(ELLIPSIZE_END)
     return lbl
 
 
@@ -59,7 +60,7 @@ def _big(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("big-value")
     lbl.set_xalign(0.0)
-    lbl.set_ellipsize(1)
+    lbl.set_ellipsize(ELLIPSIZE_END)
     return lbl
 
 
@@ -68,7 +69,7 @@ def _title(text: str) -> Gtk.Label:
     lbl = Gtk.Label(label=text)
     lbl.get_style_context().add_class("card-title")
     lbl.set_xalign(0.0)
-    lbl.set_ellipsize(1)
+    lbl.set_ellipsize(ELLIPSIZE_END)
     return lbl
 
 
@@ -189,6 +190,8 @@ class MonitorWindow(Gtk.Window):
         gauges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         for card in (self._cpu_card, self._gpu_card,
                      self._mem_card, self._gmem_card):
+            card.set_hexpand(True)
+            card.set_size_request(width=80, height=-1)
             gauges.pack_start(card, True, True, 0)
 
         graphs = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
