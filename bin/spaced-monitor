@@ -5,10 +5,14 @@ import sys
 
 here = os.path.dirname(os.path.realpath(__file__))
 # Installed: /usr/lib/spaced-monitor; staged: <prefix>/usr/lib/spaced-monitor;
-# from a checkout: the repo root. Require __main__.py so a stale directory - one
+# from a checkout: the repo root.  The tree next to the launcher is tried
+# first: for the installed script that resolves to /usr/lib/spaced-monitor
+# anyway, while for a staged (unpacked, not yet installed) copy it keeps the
+# test pointed at the package being built instead of whatever version happens
+# to be installed system-wide.  Require __main__.py so a stale directory - one
 # left behind by a purge, for instance - cannot shadow a working tree.
-for root in ("/usr/lib/spaced-monitor",
-             os.path.join(here, os.pardir, "lib", "spaced-monitor"),
+for root in (os.path.join(here, os.pardir, "lib", "spaced-monitor"),
+             "/usr/lib/spaced-monitor",
              os.path.dirname(here)):
     if os.path.isfile(os.path.join(root, "spaced_monitor", "__main__.py")):
         sys.path.insert(0, root)
