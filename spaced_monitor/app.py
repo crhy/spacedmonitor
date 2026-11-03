@@ -37,6 +37,33 @@ def _vbox(spacing: int = 4) -> Gtk.Box:
     return Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing)
 
 
+def _flow_row(max_items: int, spacing: int) -> Gtk.FlowBox:
+    """Row of cards that reflows into extra rows when squeezed.
+
+    A plain Gtk.Box reports the *sum* of its children's minimum widths, so
+    four gauge cards pinned the window at ~990px and the window manager
+    simply cut the right-hand card off.  A FlowBox reports the widest child
+    instead, so the window can shrink and the cards stack into two rows.
+    FlowBox's spacing API changed across GTK versions, hence the probes.
+    """
+    row = Gtk.FlowBox()
+    row.set_min_children_per_line(1)
+    row.set_max_children_per_line(max_items)
+    row.set_selection_mode(Gtk.SelectionMode.NONE)
+    for name in ("set_expand_children",):
+        if hasattr(row, name):
+            getattr(row, name)(True)
+    for name in ("set_child_spacing", "set_column_spacing"):
+        if hasattr(row, name):
+            getattr(row, name)(spacing)
+            break
+    for name in ("set_line_spacing", "set_row_spacing"):
+        if hasattr(row, name):
+            getattr(row, name)(spacing)
+            break
+    return row
+
+
 def _lbl(text: str, css: str = "value") -> Gtk.Label:
     """Label with a CSS class."""
     lbl = Gtk.Label(label=text)
@@ -187,12 +214,12 @@ class MonitorWindow(Gtk.Window):
         self._net_card = NetworkCard(self._pal)
         self._app_table = AppTable(self._pal)
 
-        gauges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        gauges = _flow_row(4, 8)
         for card in (self._cpu_card, self._gpu_card,
                      self._mem_card, self._gmem_card):
             card.set_hexpand(True)
             card.set_size_request(width=80, height=-1)
-            gauges.pack_start(card, True, True, 0)
+            gauges.add(card)
 
         graphs = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         graphs.pack1(self._temp_card, True, True)
@@ -218,6 +245,30 @@ class MonitorWindow(Gtk.Window):
         outer.connect("size-allocate", self._on_overview_resize)
         return outer
 
+    def _mid_extent(self, ov_w: int, graphs_h: int) -> tuple[bool, int]:
+        """Extent (px) the graphs splitter runs along, given its orientation."""
+        horizontal = self._paned_mid_h.get_orientation() == Gtk.Orientation.HORIZONTAL
+        return horizontal, (ov_w if horizontal else graphs_h)
+
+    def _mid_side_by_side_min(self) -> int:
+        """Width below which Temperature / Disk / Network cannot sit side by side."""
+        return (self._temp_card.get_preferred_width()[0]
+                + self._disk_card.get_preferred_width()[0]
+                + self._net_card.get_preferred_width()[0] + 24)
+
+    def _set_mid_orientation(self, ov_w: int) -> None:
+        """Stack the graphs row once side-by-side no longer fits.
+
+        GTK3 Paned clips its children instead of refusing to shrink, so below
+        this width the disk/network labels were being cut in half; stacking
+        keeps every card at its own minimum width.
+        """
+        want = (Gtk.Orientation.HORIZONTAL
+                if ov_w >= self._mid_side_by_side_min()
+                else Gtk.Orientation.VERTICAL)
+        if self._paned_mid_h.get_orientation() != want:
+            self._paned_mid_h.set_orientation(want)
+
     def _restore_panes(self) -> None:
         """Set Paned positions from saved fractions in settings."""
         settings = theme_mod.load_settings()
@@ -229,6 +280,7 @@ class MonitorWindow(Gtk.Window):
         inner_h = ov_h - pos
         self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
         ov_w = self._overview.get_allocated_width() or 1400
+        self._set_mid_orientation(ov_w)
         self._paned_mid_h.set_position(int(fr["pane_mid_h"] * ov_w))
 
     def _on_pane_drag(self, paned, _handle, _is_reposition) -> None:
@@ -253,7 +305,10 @@ class MonitorWindow(Gtk.Window):
         self._paned_outer.set_position(pos)
         inner_h = ov_h - pos
         self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
-        self._paned_mid_h.set_position(int(fr["pane_mid_h"] * ov_w))
+        self._set_mid_orientation(ov_w)
+        _horizontal, extent = self._mid_extent(
+            ov_w, self._paned_inner.get_allocated_height() or ov_h)
+        self._paned_mid_h.set_position(int(fr["pane_mid_h"] * extent))
         return False
 
     def _do_save_panes(self) -> bool:
@@ -262,14 +317,16 @@ class MonitorWindow(Gtk.Window):
         ov_w = self._overview.get_allocated_width()
         if ov_h < 1 or ov_w < 1:
             return False
-        pos_g = self._paned_outer.get_position()
-        pos_i = self._paned_inner.get_position()
         pos_m = self._paned_mid_h.get_position()
+        pos_i = self._paned_inner.get_position()
+        pos_g = self._paned_outer.get_position()
         inner_h = ov_h - pos_g
+        _horizontal, extent = self._mid_extent(
+            ov_w, self._paned_inner.get_allocated_height() or inner_h)
         fracs = {
             "pane_gauges": pos_g / ov_h,
             "pane_graphs": pos_i / inner_h if inner_h > 0 else 0.28,
-            "pane_mid_h": pos_m / ov_w,
+            "pane_mid_h": pos_m / extent if extent > 0 else 0.5,
         }
         settings = theme_mod.load_settings()
         settings = save_pane_fractions(settings, fracs)

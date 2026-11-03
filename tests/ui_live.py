@@ -374,6 +374,22 @@ def main() -> int:
                         f"FAIL: {page_name} value label {lbl.get_text()!r} "
                         f"is ellipsised, so its column can be crushed")
 
+        # (h) Card titles must wrap, never ellipsize.  An ellipsised title
+        # reports a tiny minimum width, so the card can be squeezed until
+        # the heading itself read "Memory …"; wrapping keeps the card's
+        # minimum honest and the title readable at any window width.
+        for lbl in _walk_labels(win._overview):
+            if "card-title" not in lbl.get_style_context().list_classes():
+                continue
+            if lbl.get_ellipsize() != 0:
+                errors.append(
+                    f"FAIL: overview card title {lbl.get_text()!r} "
+                    f"is ellipsised instead of wrapping")
+            if not lbl.get_line_wrap():
+                errors.append(
+                    f"FAIL: overview card title {lbl.get_text()!r} "
+                    f"cannot wrap, so it truncates when the card is narrow")
+
     # Stop the worker.
     win._stop_event.set()
     win.close()

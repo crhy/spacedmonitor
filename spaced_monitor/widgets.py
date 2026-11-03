@@ -20,6 +20,7 @@ from spaced_monitor.theme import DARK, gradient
 # numbers these modes NONE=0 START=1 MIDDLE=2 END=3, so the bare integer 1
 # silently means START rather than END.
 ELLIPSIZE_END = Pango.EllipsizeMode.END
+ELLIPSIZE_NONE = Pango.EllipsizeMode.NONE
 
 
 def _clamp(v: float | None, lo: float = 0.0, hi: float = 1.0) -> float:

@@ -12,7 +12,7 @@ from spaced_monitor import theme as theme_mod
 from spaced_monitor.collect import Filesystem, GpuExtra, Interface, Temperature
 from spaced_monitor.processes import (AppUsage, ProcUsage, display_name,
                                       end_immediate, filter_apps)
-from spaced_monitor.widgets import Gauge, Meter, StackedBar
+from spaced_monitor.widgets import (ELLIPSIZE_END, Gauge, Meter, StackedBar)
 
 # Columns the Processes page can sort by, in header order.
 SORT_COLUMNS = ("app", "cpu", "ram", "gpu", "disk")
@@ -260,6 +260,7 @@ class ProcessesPage(Gtk.Box):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self._count = _muted(count_summary([]))
+        self._count.set_ellipsize(ELLIPSIZE_END)
         head.pack_start(self._count, False, False, 0)
         self._search = Gtk.SearchEntry()
         self._search.set_placeholder_text("Search processes\u2026")
