@@ -80,3 +80,14 @@ class Packaging(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LauncherPrefersItsOwnTree(unittest.TestCase):
+    """Run from a checkout, the launcher must import that checkout, not /usr/lib."""
+
+    def test_checkout_before_system_install(self):
+        import pathlib, re
+        src = (pathlib.Path(__file__).resolve().parents[1] / "bin" / "spaced-monitor").read_text()
+        roots = re.search(r"for root in \((.*?)\):", src, re.S).group(1)
+        self.assertLess(roots.index("os.path.dirname(here)"),
+                        roots.index('"/usr/lib/spaced-monitor"'))
