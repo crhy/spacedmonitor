@@ -105,25 +105,62 @@ class TestEndImmediate(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("already gone", msg)
 
-    def test_sigkill_survivors_kills_alive(self):
-        """_sigkill_survivors SIGKILLs pids that are still alive."""
+    def test_sigkill_survivors_kills_same_process(self):
+        """A pid still running with the start time recorded at SIGTERM is SIGKILLed."""
         calls = []
-        fake_kill = lambda pid, sig: calls.append((pid, sig))
-        with patch("os.kill", side_effect=lambda p, s: None):
-            result = _sigkill_survivors([100], fake_kill)
+        result = _sigkill_survivors([100], lambda p, s: calls.append((p, s)),
+                                    {100: "555"}, start_of=lambda pid: "555")
         self.assertFalse(result)
         self.assertEqual(calls, [(100, signal.SIGKILL)])
 
     def test_sigkill_survivors_skips_dead(self):
-        """_sigkill_survivors skips pids that are already gone."""
+        """A pid that is gone is not signalled."""
         calls = []
-        fake_kill = lambda pid, sig: calls.append((pid, sig))
-        def lookup_fail(p, s):
-            raise ProcessLookupError
-        with patch("os.kill", side_effect=lookup_fail):
-            result = _sigkill_survivors([100], fake_kill)
+        result = _sigkill_survivors([100], lambda p, s: calls.append((p, s)),
+                                    {100: "555"}, start_of=lambda pid: None)
         self.assertFalse(result)
         self.assertEqual(calls, [])
+
+    def test_sigkill_survivors_never_kills_a_reused_pid(self):
+        """The app exited and the kernel gave its pid to another process."""
+        calls = []
+        _sigkill_survivors([100], lambda p, s: calls.append((p, s)),
+                           {100: "555"}, start_of=lambda pid: "999")
+        self.assertEqual(calls, [])
+
+    def test_end_immediate_records_start_times_for_sigkill(self):
+        """The scheduled SIGKILL gets the start times taken at SIGTERM."""
+        timeouts = []
+        end_immediate(_app(pids=(42, 43)), kill=lambda p, s: None, uid=0,
+                      timeout_add=lambda ms, fn, *a: timeouts.append(a),
+                      start_of=lambda pid: "t%d" % pid)
+        self.assertEqual(timeouts[0][2], {42: "t42", 43: "t43"})
+
+    def test_no_sigkill_scheduled_when_already_gone(self):
+        """Nothing to follow up when every pid was already gone."""
+        timeouts = []
+        def gone(pid, sig):
+            raise ProcessLookupError
+        end_immediate(_app(pids=(7,)), kill=gone, uid=0,
+                      timeout_add=lambda *a: timeouts.append(a),
+                      start_of=lambda pid: None)
+        self.assertEqual(timeouts, [])
+
+    def test_refuses_desktop_session_processes(self):
+        """Ending the window manager or the X server would log the user out."""
+        for name in ("Xorg", "mate-session", "marco", "compiz", "mate-panel"):
+            calls = []
+            ok, msg = end_immediate(_app(name=name, pids=(500,)),
+                                    kill=lambda p, s: calls.append(p), uid=0)
+            self.assertFalse(ok, name)
+            self.assertIn("log you out", msg)
+            self.assertEqual(calls, [], name)
+
+    def test_start_time_of_a_real_process(self):
+        """The start time parser reads this test's own /proc entry."""
+        from spaced_monitor.processes import _start_time
+        self.assertTrue(_start_time(os.getpid()).isdigit())
+        self.assertIsNone(_start_time(2 ** 22 + 1))
 
 
 if __name__ == "__main__":

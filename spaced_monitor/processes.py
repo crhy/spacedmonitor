@@ -50,13 +50,46 @@ _NAME_MAP = {
     "strata": "Strata",
 }
 
-_GENERIC_INTERPRETERS = frozenset(("python3", "node", "java", "bash"))
+_GENERIC_INTERPRETERS = frozenset(("python3", "python", "node", "java", "bash",
+                                   "sh", "perl", "ruby"))
+# Ending one of these ends the desktop session (or the display), not an app.
+_SESSION_CRITICAL = frozenset((
+    "Xorg", "Xwayland", "X", "mate-session", "marco", "compiz", "mate-panel",
+    "lightdm", "slim", "elogind", "elogind-daemon", "dbus-daemon", "login"))
 _SKIP_DIRS = frozenset(("versions", "bin", "lib", ".local", "share", ""))
 
 
 def _is_version(name: str) -> bool:
     """True when name is only digits and dots (e.g. '2.1.287')."""
     return bool(name) and all(c.isdigit() or c == "." for c in name)
+
+
+def _is_interpreter(name: str) -> bool:
+    """True for python3, python3.14, node, bash ...: the script is the app."""
+    low = name.lower()
+    if low.startswith("python") and _is_version(low[6:]):
+        return True
+    return low in _GENERIC_INTERPRETERS
+
+
+def _script_of(cmdline: list) -> str:
+    """The script or module an interpreter runs ('' when none): its identity."""
+    args = list(cmdline or [])[1:]
+    for i, arg in enumerate(args):
+        if arg == "-m" and i + 1 < len(args):
+            return "-m " + args[i + 1]
+        if arg == "-c":
+            return "-c " + (args[i + 1] if i + 1 < len(args) else "")
+        if not arg.startswith("-"):
+            return arg
+    return ""
+
+
+def _group_key(name: str, user: str, cmdline: list) -> tuple[str, str]:
+    """Processes are grouped by name and user; interpreters also by script."""
+    if _is_interpreter(name):
+        return (name + "\0" + _script_of(cmdline), user)
+    return (name, user)
 
 
 def _name_from_exe(exe: str) -> str:
@@ -73,9 +106,10 @@ def _name_from_exe(exe: str) -> str:
 
 def _name_from_cmdline(cmdline: list) -> str:
     """Derive app name from a script path in cmdline (e.g. /x/y/app.py -> App)."""
-    for arg in (cmdline or []):
-        if arg.startswith("-"):
-            continue
+    script = _script_of(cmdline)
+    if script.startswith("-m "):
+        script = script[3:].split(".")[0]
+    for arg in ([script] if script and not script.startswith("-c") else []):
         base = os.path.basename(arg)
         stem = os.path.splitext(base)[0]
         if stem and not stem.startswith("-") and not _is_version(stem):
@@ -85,6 +119,10 @@ def _name_from_cmdline(cmdline: list) -> str:
 
 def display_name(name: str, exe: str = "", cmdline: list = None) -> str:
     """Turn a raw process name into a nicer label."""
+    if _is_interpreter(name):
+        derived = _name_from_cmdline(cmdline or [])
+        if derived:
+            return derived
     if name in _NAME_MAP:
         return _NAME_MAP[name]
     base = name
@@ -92,8 +130,9 @@ def display_name(name: str, exe: str = "", cmdline: list = None) -> str:
         if base.endswith(suffix):
             base = base[: -len(suffix)]
             break
-    if _is_version(base) or base.lower() in _GENERIC_INTERPRETERS:
-        derived = _name_from_exe(exe) or _name_from_cmdline(cmdline or [])
+    if _is_version(base) or _is_interpreter(base):
+        derived = (_name_from_cmdline(cmdline or []) if _is_interpreter(base)
+                   else _name_from_exe(exe) or _name_from_cmdline(cmdline or []))
         if derived:
             return derived
         if base.lower() in _NAME_MAP:
@@ -366,7 +405,7 @@ class ProcessSampler:
             exe = _safe_exe(proc)
             cmdl = _safe_cmdline(proc)
             disk = self._io_delta(proc, pid)
-            g = groups.setdefault((name, user), {
+            g = groups.setdefault(_group_key(name, user, cmdl), {
                 "pids": [], "cpu": 0.0, "rss": 0, "gpu_percent": 0.0,
                 "gpu_mem": 0, "disk": 0, "children": [],
                 "exe": "", "cmdline": [],
@@ -387,7 +426,8 @@ class ProcessSampler:
                 self._procs.pop(pid, None)
                 self._io.pop(pid, None)
         rows = []
-        for (name, user), g in groups.items():
+        for (key, user), g in groups.items():
+            name = key.split("\0", 1)[0]
             rows.append(AppUsage(
                 name=name, pids=g["pids"],
                 cpu_percent=g["cpu"] / cpu_n,
@@ -418,24 +458,51 @@ def filter_apps(apps: Sequence[AppUsage], text: str = "", scope: str = "all",
     return out
 
 
-def end_app(app: AppUsage, force: bool = False, kill: Callable = os.kill,
-            me: Optional[int] = None, uid: Optional[int] = None) -> tuple[bool, str]:
-    """End an app's processes; refuse protected pids and other users' apps."""
-    if me is None:
-        me = os.getpid()
-    if uid is None:
-        uid = os.getuid()
+def _start_time(pid: int) -> Optional[str]:
+    """The kernel start time of pid (/proc/<pid>/stat field 22); None if gone.
+
+    A pid can be reused by an unrelated process: the start time tells them apart.
+    """
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as fh:
+            stat = fh.read()
+    except OSError:
+        return None
+    fields = stat.rsplit(")", 1)[-1].split()
+    return fields[19] if len(fields) > 19 else None
+
+
+def _refusal(app: AppUsage, me: int, uid: int) -> Optional[str]:
+    """Why this app must not be ended, or None when it may be."""
     name = display_name(app.name, exe=app.exe, cmdline=app.cmdline)
     for pid in app.pids:
         if pid in (1, 2) or pid == me:
-            return (False, f"refusing to end {name}: protected process {pid}")
+            return f"refusing to end {name}: protected process {pid}"
+    if app.name in _SESSION_CRITICAL:
+        return f"{name} runs your desktop session: ending it would log you out."
     try:
         owner = pwd.getpwuid(uid).pw_name
     except KeyError:
         owner = None
     if uid != 0 and app.user and owner is not None and app.user != owner:
-        return (False, f"{name} belongs to {app.user}: ending it needs an administrator.")
-    sig = signal.SIGKILL if force else signal.SIGTERM
+        return f"{name} belongs to {app.user}: ending it needs an administrator."
+    return None
+
+
+def end_app(app: AppUsage, force: bool = False, kill: Callable = os.kill,
+            me: Optional[int] = None, uid: Optional[int] = None) -> tuple[bool, str]:
+    """End an app's processes; refuse protected pids and other users' apps."""
+    me = os.getpid() if me is None else me
+    uid = os.getuid() if uid is None else uid
+    reason = _refusal(app, me, uid)
+    if reason:
+        return (False, reason)
+    return _signal_all(app, signal.SIGKILL if force else signal.SIGTERM, kill)
+
+
+def _signal_all(app: AppUsage, sig: int, kill: Callable) -> tuple[bool, str]:
+    """Send sig to every pid of app; the result message for the user."""
+    name = display_name(app.name, exe=app.exe, cmdline=app.cmdline)
     killed = 0
     for pid in app.pids:
         try:
@@ -452,50 +519,35 @@ def end_app(app: AppUsage, force: bool = False, kill: Callable = os.kill,
 
 def end_immediate(app: AppUsage, kill: Callable = os.kill,
                   timeout_add: Callable | None = None,
-                  me: Optional[int] = None, uid: Optional[int] = None
-                  ) -> tuple[bool, str]:
-    """End an app now: SIGTERM every pid, SIGKILL survivors after 2 s.
+                  me: Optional[int] = None, uid: Optional[int] = None,
+                  start_of: Callable = _start_time) -> tuple[bool, str]:
+    """End an app now: SIGTERM every pid, SIGKILL the same processes after 2 s.
 
     timeout_add is the GLib.timeout_add callable (or a fake in tests).
     Returns (False, reason) when the app is protected or belongs to another user.
     """
-    if me is None:
-        me = os.getpid()
-    if uid is None:
-        uid = os.getuid()
-    name = display_name(app.name, exe=app.exe, cmdline=app.cmdline)
-    for pid in app.pids:
-        if pid in (1, 2) or pid == me:
-            return (False, f"refusing to end {name}: protected process {pid}")
-    try:
-        owner = pwd.getpwuid(uid).pw_name
-    except KeyError:
-        owner = None
-    if uid != 0 and app.user and owner is not None and app.user != owner:
-        return (False, f"{name} belongs to {app.user}: ending it needs an administrator.")
-    killed = 0
-    for pid in app.pids:
-        try:
-            kill(pid, signal.SIGTERM)
-            killed += 1
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            return (False, f"{name} belongs to {app.user}: ending it needs an administrator.")
-    if killed == 0:
-        return (True, f"{name} was already gone")
-    if timeout_add is not None:
-        timeout_add(2000, _sigkill_survivors, list(app.pids), kill)
-    return (True, f"ended {name} ({killed} process(es))")
+    me = os.getpid() if me is None else me
+    uid = os.getuid() if uid is None else uid
+    reason = _refusal(app, me, uid)
+    if reason:
+        return (False, reason)
+    starts = {pid: start_of(pid) for pid in app.pids}
+    ok, msg = _signal_all(app, signal.SIGTERM, kill)
+    if ok and timeout_add is not None and not msg.endswith("already gone"):
+        timeout_add(2000, _sigkill_survivors, list(app.pids), kill, starts, start_of)
+    return (ok, msg)
 
 
-def _sigkill_survivors(pids: list, kill: Callable) -> bool:
-    """SIGKILL any pid still alive; returns False so the timeout does not repeat."""
-    import os as _os
+def _sigkill_survivors(pids: list, kill: Callable, starts: dict,
+                       start_of: Callable = _start_time) -> bool:
+    """SIGKILL each pid that is still the SAME process SIGTERM was sent to.
+
+    A pid whose start time changed was reused by another process: never touch it.
+    Returns False so the GLib timeout does not repeat.
+    """
     for pid in pids:
-        try:
-            _os.kill(pid, 0)
-        except (ProcessLookupError, PermissionError):
+        now = start_of(pid)
+        if now is None or starts.get(pid) is None or now != starts[pid]:
             continue
         try:
             kill(pid, signal.SIGKILL)

@@ -29,8 +29,10 @@ class FakeProcess:
     """A psutil.Process stand-in with settable readings."""
 
     def __init__(self, pid, name="x", user="rhy", cpu=0.0, rss=0, ppid=1,
-                 exe="/bin/x", read=0, write=0, io_raises=None, name_raises=None):
+                 exe="/bin/x", read=0, write=0, io_raises=None, name_raises=None,
+                 cmdline=None):
         self.pid = pid
+        self._cmdline = cmdline or []
         self._name = name
         self._user = user
         self._cpu = cpu
@@ -61,6 +63,9 @@ class FakeProcess:
 
     def exe(self):
         return self._exe or ""
+
+    def cmdline(self):
+        return self._cmdline
 
     def io_counters(self):
         if self._io_raises:
@@ -139,6 +144,30 @@ class TestSampler(unittest.TestCase):
         assert len(rows) == 1
         assert sorted(rows[0].pids) == [10, 11, 12]
         assert rows[0].name == "brave" and rows[0].user == "rhy"
+
+    def test_interpreter_scripts_are_separate_apps(self):
+        """Two python3 programs are two apps: one red X must not end both."""
+        procs = [FakeProcess(30, name="python3", cmdline=["/usr/bin/python3", "/opt/voxa/voxa.py"]),
+                 FakeProcess(31, name="python3", cmdline=["/usr/bin/python3", "-m", "spaced_monitor"]),
+                 FakeProcess(32, name="python3", cmdline=["/usr/bin/python3", "/opt/voxa/voxa.py", "--x"])]
+        rows = self._sampler(procs).sample()
+        by_pids = sorted(sorted(r.pids) for r in rows)
+        assert by_pids == [[30, 32], [31]], by_pids
+        names = sorted(display_name(r.name, exe=r.exe, cmdline=r.cmdline) for r in rows)
+        assert names == ["Spaced_monitor", "Voxa"], names
+
+    def test_interpreter_display_names(self):
+        """The script, not the interpreter, names the app."""
+        assert display_name("python3", cmdline=["/usr/bin/python3", "/x/app.py"]) == "App"
+        assert display_name("python3.14", cmdline=["python3.14", "-m", "pkg.main"]) == "Pkg"
+        assert display_name("bash", cmdline=["bash", "/home/u/run-all.sh"]) == "Run-all"
+        assert display_name("python3", cmdline=["/usr/bin/python3"]) == "Python"
+
+    def test_inline_commands_are_separate_apps(self):
+        """Each `bash -c <command>` is its own program."""
+        procs = [FakeProcess(40, name="bash", cmdline=["bash", "-c", "sleep 9"]),
+                 FakeProcess(41, name="bash", cmdline=["bash", "-c", "make all"])]
+        assert len(self._sampler(procs).sample()) == 2
 
     def test_per_user_split(self):
         procs = [FakeProcess(20, name="worker", user="rhy"),
