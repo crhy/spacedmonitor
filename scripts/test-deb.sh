@@ -112,8 +112,14 @@ for entry in $missing; do
         *)      want="" ;;
     esac
     [ -n "$want" ] || fail "import not understood: $mod (add it to the provider map)"
-    grep -qF "$want" <<<"$depends" || fail "module imports '$mod' but Depends lacks $want"
+    grep -qE "(^|, )${want}( |,|$)" <<<"$depends" || fail "module imports '$mod' but Depends lacks $want"
 done
+# Cairo drawing from a GTK "draw" handler needs the GI<->cairo bridge (gi._gi_cairo),
+# which only python3-gi-cairo ships; without it no gauge or graph can draw.
+if grep -rqs '"draw"' "$tmp/pfx/usr/lib/${pkg}/spaced_monitor"; then
+    grep -qE "(^|, )python3-gi-cairo( |,|$)" <<<"$depends" \
+        || fail "draw handlers need python3-gi-cairo in Depends"
+fi
 ok "every import is declared in Depends ($depends)"
 
 # --- 7. A real headless render of the packaged code, with no repo on sys.path. ---

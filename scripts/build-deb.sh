@@ -63,7 +63,7 @@ Architecture: all
 Section: utils
 Priority: optional
 Maintainer: Spaced Linux Team
-Depends: python3, python3-gi, gir1.2-gtk-3.0, python3-cairo, python3-psutil
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, python3-cairo, python3-psutil
 Recommends: iproute2
 Homepage: https://github.com/crhy/spacedmonitor
 Description: See what your computer is doing

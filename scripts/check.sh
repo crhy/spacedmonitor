@@ -33,6 +33,10 @@ if [ -f tests/ui_themes.py ]; then
     echo "OK: UI theme tests (screenshots in build/screenshots/)"
 fi
 
+bash scripts/build-deb.sh >/dev/null
+timeout 600 bash scripts/test-deb.sh | tail -n 1
+echo "OK: the .deb builds and passes its own gate (scripts/test-deb.sh)"
+
 if grep -rIl --exclude-dir=.git -e systemd -e systemctl spaced_monitor bin packaging 2>/dev/null; then
     echo "FAIL: systemd reference above (Spaced Linux has no systemd)"; exit 1
 fi
