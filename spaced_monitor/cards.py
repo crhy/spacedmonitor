@@ -126,9 +126,13 @@ class _Sizing:
     def _connect_sizing(self) -> None:
         self.connect("size-allocate", self._on_size_allocate)
 
-    def _on_size_allocate(self, _widget, _allocation) -> None:
-        if getattr(self, "_sa_pending", False):
+    def _on_size_allocate(self, _widget, allocation) -> None:
+        # Only a new size needs a re-measure: _fit's own visibility changes
+        # trigger relayouts at the same size, which must not queue it again.
+        size = (allocation.width, allocation.height)
+        if getattr(self, "_sa_pending", False) or size == getattr(self, "_sa_size", None):
             return
+        self._sa_size = size
         self._sa_pending = True
         GLib.idle_add(self._fit)
 

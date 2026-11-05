@@ -42,6 +42,12 @@ def _value(text: str) -> Gtk.Label:
     return lbl
 
 
+def _set_text(label: Gtk.Label, text: str) -> None:
+    """Change a label only when its text changes (each change relayouts)."""
+    if label.get_text() != text:
+        label.set_text(text)
+
+
 class AppTable(Gtk.Box):
     """A card with a search/scope header and a scrollable, sortable table."""
 
@@ -58,6 +64,7 @@ class AppTable(Gtk.Box):
         self._desc = True
         self._header_btns: dict[str, Gtk.Button] = {}
         self._meters: list[list[Meter]] = []
+        self._rows: list[dict] = []
         self._msg_bar: Gtk.Label | None = None
         self._msg_timeout_id: int = 0
         self._build_header()
@@ -125,59 +132,76 @@ class AppTable(Gtk.Box):
         return sort_apps(kept, column=self._col, reverse=self._desc)
 
     def _rebuild(self) -> None:
-        """Recreate the data rows, keeping the column-header buttons pinned.
+        """Show the current apps, reusing the row widgets.
 
-        The header buttons are built once and never removed, so they stay
-        allocated (visible) across every refresh instead of briefly becoming
-        unallocated while the grid is rebuilt.
+        Destroying and recreating every row (~150 apps x 11 widgets) each
+        refresh was most of the app's own CPU use: rows are created once,
+        then only their text, icon and meters change. Extra rows are hidden.
+        The header buttons are never touched, so they stay allocated.
         """
-        header_btns = set(self._header_btns.values())
-        for child in self._grid.get_children():
-            if child not in header_btns:
-                self._grid.remove(child)
-        self._meters = []
         self._repaint_headers()
-        for r, app in enumerate(self._apps, start=1):
-            self._add_row(app, r)
+        while len(self._rows) < len(self._apps):
+            self._rows.append(self._new_row(len(self._rows)))
+        for index, row in enumerate(self._rows):
+            shown = index < len(self._apps)
+            if shown:
+                self._fill_row(row, self._apps[index])
+            for widget in row["widgets"]:
+                if widget.get_visible() != shown:
+                    widget.set_visible(shown)
+        self._meters = [row["meters"] for row in self._rows[:len(self._apps)]]
         self._update_meters()
-        self._grid.show_all()
         self._apply_meter_visibility()
 
-    def _add_row(self, app: AppUsage, row: int) -> None:
-        """Attach one app row: end button, icon, name, value+meter pairs."""
+    def _new_row(self, index: int) -> dict:
+        """Create and attach one empty row: end button, icon, name, value+meter pairs."""
+        grid_row = index + 1
         btn = Gtk.Button(label="\u2715")
         btn.get_style_context().add_class("end-button")
         btn.set_tooltip_text("End this app")
-        btn.connect("clicked", self._on_end, app)
-        self._grid.attach(btn, 0, row, 1, 1)
-        icon_name = app.icon or "application-x-executable"
-        theme = Gtk.IconTheme.get_default()
-        if icon_name != "application-x-executable" and not theme.has_icon(icon_name):
-            icon_name = "application-x-executable"
-        icon = Gtk.Image.new_from_icon_name(
-            icon_name, Gtk.IconSize.MENU)
-        self._grid.attach(icon, 1, row, 1, 1)
-        name = _value(display_name(app.name, exe=app.exe, cmdline=app.cmdline))
+        btn.connect("clicked", self._on_end_row, index)
+        self._grid.attach(btn, 0, grid_row, 1, 1)
+        icon = Gtk.Image.new_from_icon_name("application-x-executable", Gtk.IconSize.MENU)
+        self._grid.attach(icon, 1, grid_row, 1, 1)
+        name = _value("")
         name.set_hexpand(True)
         name.set_xalign(0.0)
         name.set_ellipsize(ELLIPSIZE_END)
-        self._grid.attach(name, 2, row, 1, 1)
+        self._grid.attach(name, 2, grid_row, 1, 1)
+        labels, meters = [], []
         colours = (self._pal.cpu_start, self._pal.ram_start,
                    self._pal.gpu_memory_start, self._pal.disk_read)
-        texts = (fmt.percent(app.cpu_percent), fmt.bytes_gb(app.rss),
-                 fmt.percent(app.gpu_percent), fmt.rate(app.disk_bps))
-        row_meters: list[Meter] = []
-        for c, (colour, text) in enumerate(zip(colours, texts)):
+        for c in range(4):
             col = 3 + c * 2
-            lbl = _value(text)
+            lbl = _value("")
             lbl.set_xalign(1.0)
-            self._grid.attach(lbl, col, row, 1, 1)
+            self._grid.attach(lbl, col, grid_row, 1, 1)
             meter = Meter(self._pal)
             meter.set_size_request(56, 12)
-            meter.set_value(0.0, colour)
-            self._grid.attach(meter, col + 1, row, 1, 1)
-            row_meters.append(meter)
-        self._meters.append(row_meters)
+            meter.set_value(0.0, colours[c])
+            self._grid.attach(meter, col + 1, grid_row, 1, 1)
+            labels.append(lbl)
+            meters.append(meter)
+        widgets = [btn, icon, name, *labels, *meters]
+        for widget in widgets:
+            widget.show()
+        return {"widgets": widgets, "icon": icon, "icon_name": "", "name": name,
+                "labels": labels, "meters": meters}
+
+    def _fill_row(self, row: dict, app: AppUsage) -> None:
+        """Put one app's name, icon and values into an existing row."""
+        icon_name = app.icon or "application-x-executable"
+        if icon_name != "application-x-executable" and \
+                not Gtk.IconTheme.get_default().has_icon(icon_name):
+            icon_name = "application-x-executable"
+        if row["icon_name"] != icon_name:
+            row["icon"].set_from_icon_name(icon_name, Gtk.IconSize.MENU)
+            row["icon_name"] = icon_name
+        _set_text(row["name"], display_name(app.name, exe=app.exe, cmdline=app.cmdline))
+        texts = (fmt.percent(app.cpu_percent), fmt.bytes_gb(app.rss),
+                 fmt.percent(app.gpu_percent), fmt.rate(app.disk_bps))
+        for lbl, text in zip(row["labels"], texts):
+            _set_text(lbl, text)
 
     def _update_meters(self) -> None:
         """Scale each column's meters to that column's maximum."""
@@ -192,8 +216,11 @@ class AppTable(Gtk.Box):
             for c, maximum in enumerate(maxima):
                 row_m[c].set_value(meter_fraction(values[c], maximum))
 
-    def _on_size_allocate(self, _widget, _allocation) -> None:
+    def _on_size_allocate(self, _widget, allocation) -> None:
         """Hide meters below 900px width to keep all columns visible."""
+        if allocation.width == getattr(self, "_sa_width", None):
+            return
+        self._sa_width = allocation.width
         self._apply_meter_visibility()
 
     def _apply_meter_visibility(self) -> None:
@@ -202,7 +229,8 @@ class AppTable(Gtk.Box):
         show_meters = w >= 900
         for row_m in self._meters:
             for meter in row_m:
-                meter.set_visible(show_meters)
+                if meter.get_visible() != show_meters:
+                    meter.set_visible(show_meters)
 
     def _on_search(self, entry) -> None:
         """Remember the search text and re-filter."""
@@ -228,6 +256,11 @@ class AppTable(Gtk.Box):
         self._apps = self._visible()
         self._rebuild()
 
+    def _on_end_row(self, _btn, index: int) -> None:
+        """End the app shown in this row right now."""
+        if index < len(self._apps):
+            self._on_end(_btn, self._apps[index])
+
     def _on_end(self, _btn, app: AppUsage) -> None:
         """End the app immediately: SIGTERM then SIGKILL after 2 s."""
         ok, msg = end_immediate(app, timeout_add=GLib.timeout_add)
@@ -245,7 +278,7 @@ class AppTable(Gtk.Box):
         else:
             self._msg_bar.set_text(text)
         if self._msg_timeout_id:
-            GLib.timeout_cancel(self._msg_timeout_id)
+            GLib.source_remove(self._msg_timeout_id)
         self._msg_timeout_id = GLib.timeout_add(
             4000, self._clear_msg)
 

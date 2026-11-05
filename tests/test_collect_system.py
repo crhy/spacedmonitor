@@ -156,3 +156,107 @@ class TestCpuSampler(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SensorsReadOncePerSnapshot(unittest.TestCase):
+    """The hwmon walk is the costliest read: one per snapshot, not one per user."""
+
+    def test_one_sensors_temperatures_call_per_sample(self):
+        import psutil
+        from spaced_monitor.collect import Sampler
+
+        class Counting:
+            calls = 0
+
+            def sensors_temperatures(self):
+                Counting.calls += 1
+                return {"k10temp": [types.SimpleNamespace(label="Tctl", current=50.0,
+                                                          high=None, critical=None)]}
+
+            def __getattr__(self, name):
+                return getattr(psutil, name)
+
+        snap = Sampler(ps=Counting(), gpu_fn=lambda: None, iface_fn=lambda: {},
+                       gpu_extra_fn=lambda: None, power_root="/nonexistent").sample()
+        self.assertEqual(Counting.calls, 1)
+        self.assertEqual(snap.cpu.temp_c, 50.0)
+
+
+class HwmonTempsReader(unittest.TestCase):
+    """The lean hwmon reader returns psutil's shape and survives hotplug."""
+
+    def _chip(self, root, n, name, sensors):
+        import os
+        d = os.path.join(root, f"hwmon{n}")
+        os.makedirs(d)
+        with open(os.path.join(d, "name"), "w") as fh:
+            fh.write(name + "\n")
+        for i, (label, milli) in enumerate(sensors, 1):
+            with open(os.path.join(d, f"temp{i}_input"), "w") as fh:
+                fh.write(f"{milli}\n")
+            if label is not None:
+                with open(os.path.join(d, f"temp{i}_label"), "w") as fh:
+                    fh.write(label + "\n")
+
+    def test_reads_and_rediscovers(self):
+        import os, shutil, tempfile
+        from spaced_monitor.collect import HwmonTemps, cpu_temp
+        root = tempfile.mkdtemp(dir=os.path.join(os.path.dirname(__file__), "..", "build"))
+        self.addCleanup(shutil.rmtree, root)
+        self._chip(root, 0, "k10temp", [("Tctl", 61250), ("Tccd1", 55000)])
+        self._chip(root, 1, "nvme", [(None, 40000)])
+        h = HwmonTemps(root=root, clock=lambda: 0.0)
+        got = h.sensors_temperatures()
+        self.assertEqual([(r.label, r.current) for r in got["k10temp"]],
+                         [("Tctl", 61.25), ("Tccd1", 55.0)])
+        self.assertEqual([(r.label, r.current) for r in got["nvme"]], [("", 40.0)])
+        self.assertEqual(cpu_temp(h), 61.25)
+        shutil.rmtree(os.path.join(root, "hwmon1"))   # a device went away
+        self.assertNotIn("nvme", h.sensors_temperatures())
+        self.assertEqual(sorted(h.sensors_temperatures()), ["k10temp"])  # rediscovered
+
+
+class SlowSensorsEveryFiveSeconds(unittest.TestCase):
+    """Fans and the full temperature list sit on slow buses: not every second."""
+
+    def test_fans_and_full_list_every_five_seconds(self):
+        import psutil
+        from spaced_monitor.collect import Sampler
+
+        class Counting:
+            fans = 0
+
+            def sensors_fans(self):
+                Counting.fans += 1
+                return {}
+
+            def sensors_temperatures(self):
+                return {"k10temp": [types.SimpleNamespace(label="Tctl", current=50.0)]}
+
+            def __getattr__(self, name):
+                return getattr(psutil, name)
+
+        t = [100.0]
+        s = Sampler(ps=Counting(), clock=lambda: t[0], gpu_fn=lambda: None,
+                    iface_fn=lambda: {}, gpu_extra_fn=lambda: None, power_root="/nonexistent")
+        snaps = []
+        for _ in range(6):
+            snaps.append(s.sample())
+            t[0] += 1.0
+        self.assertEqual(Counting.fans, 2)                     # t=100 and t=105
+        self.assertTrue(all(sn.temperatures for sn in snaps))  # reused in between
+        self.assertTrue(all(sn.cpu.temp_c == 50.0 for sn in snaps))
+
+    def test_cpu_only_reads_just_the_cpu_chip(self):
+        import os, shutil, tempfile
+        from spaced_monitor.collect import HwmonTemps
+        root = tempfile.mkdtemp(dir=os.path.join(os.path.dirname(__file__), "..", "build"))
+        self.addCleanup(shutil.rmtree, root)
+        HwmonTempsReader._chip(self, root, 0, "k10temp", [("Tctl", 60000)])
+        HwmonTempsReader._chip(self, root, 1, "spd5118", [(None, 35000)])
+        h = HwmonTemps(root=root, clock=lambda: 0.0)
+        self.assertEqual(sorted(h.sensors_temperatures(cpu_only=True)), ["k10temp"])
+        self.assertEqual(sorted(h.sensors_temperatures()), ["k10temp", "spd5118"])
+        shutil.rmtree(os.path.join(root, "hwmon0"))
+        h2 = HwmonTemps(root=root, clock=lambda: 0.0)
+        self.assertEqual(sorted(h2.sensors_temperatures(cpu_only=True)), ["spd5118"])  # no CPU chip: all

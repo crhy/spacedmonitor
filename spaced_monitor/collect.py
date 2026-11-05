@@ -605,14 +605,20 @@ class Snapshot:
 class Sampler:
     """Own the sub-samplers and return one Snapshot per sample()."""
 
+    _SLOW_EVERY_S = 5.0
+
     def __init__(self, ps=None, run: Callable = None, clock: Callable[[], float] = time.monotonic,
                  power_root: str = "/sys/class/powercap", drm_root: str = "/sys/class/drm",
                  gpu_fn: Callable = None, read: Callable[[str], str] = None,
                  iface_fn: Callable = None, gpu_extra_fn: Callable = None) -> None:
         """Wire the collectors; every probe is injectable for tests."""
+        # The lean hwmon reader stands in for psutil's sensors only when the
+        # real psutil is used; an injected ps (tests) is read as given.
+        self._hwmon = None
         if ps is None:
             import psutil
             ps = psutil
+            self._hwmon = HwmonTemps()
         self._ps = ps
         self._cpu = CpuSampler(ps, read=read)
         self._rates = RateSampler(ps, clock=clock)
@@ -620,6 +626,10 @@ class Sampler:
         self._gpu_fn = gpu_fn if gpu_fn is not None else lambda: gpu(run=run, drm_root=drm_root)
         self._iface_fn = iface_fn if iface_fn is not None else lambda: interface_addresses(run)
         self._gpu_extra_fn = gpu_extra_fn if gpu_extra_fn is not None else lambda: nvidia_extra(run)
+        self._clock = clock
+        self._slow_at: Optional[float] = None
+        self._temps_last: list = []
+        self._fans_last: list = []
         self._addresses: Optional[dict] = None
         self._extra: Optional[GpuExtra] = None
         self._extra_read = False
@@ -643,20 +653,134 @@ class Sampler:
         """Take one full snapshot."""
         disk, net = self._rates.sample()
         info = self._gpu_fn()
+        # Every sensor chip and fan sits on a slow bus whose driver re-reads
+        # the hardware once its ~1 s cache expires: the full list and the fans
+        # are read every _SLOW_EVERY_S, the CPU temperature every sample.
+        now = self._clock()
+        slow = self._slow_at is None or now - self._slow_at >= self._SLOW_EVERY_S
+        if slow:
+            self._slow_at = now
+        once = _SensorsOnce(self._ps, self._hwmon, cpu_only=not slow)
+        if slow:
+            self._temps_last = temperatures(once)
+            self._fans_last = fans(self._ps)
         return Snapshot(
-            cpu=self._cpu.sample(),
+            cpu=self._cpu.sample(once),
             memory=memory(self._ps),
             gpu=info,
             disk=disk,
             net=net,
-            fans=fans(self._ps),
+            fans=self._fans_last,
             cpu_power_w=self._power.sample(),
             uptime_s=uptime_seconds(self._ps),
-            temperatures=temperatures(self._ps),
+            temperatures=self._temps_last,
             filesystems=filesystems(self._ps),
             interfaces=self._interfaces(),
             gpu_extra=self._gpu_extra() if info else None,
         )
+
+
+# hwmon chips that report the CPU package temperature (what cpu_temp reads).
+_CPU_CHIPS = frozenset(("k10temp", "coretemp", "zenpower", "cpu_thermal", "soc_thermal"))
+
+
+class HwmonTemps:
+    """Read hwmon temperatures cheaply: labels once, only temp*_input each time.
+
+    psutil.sensors_temperatures() re-reads every label, max and crit file on
+    every call (about a thousand sysfs reads on a desktop board, 40-100 ms).
+    Labels never change, so they are discovered once and refreshed every 30 s
+    (or after a failed read: a sensor came or went). The result has psutil's
+    shape: {chip: [reading with .label and .current]}.
+    """
+
+    _REDISCOVER_S = 30.0
+
+    def __init__(self, root: str = "/sys/class/hwmon",
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self._root = root
+        self._clock = clock
+        self._inputs: list = []
+        self._found_at: Optional[float] = None
+
+    def _discover(self) -> None:
+        inputs = []
+        for hw in sorted(glob.glob(os.path.join(self._root, "hwmon*"))):
+            chip = _read_first(os.path.join(hw, "name"))
+            if not chip:
+                continue
+            for path in sorted(glob.glob(os.path.join(hw, "temp*_input"))):
+                label = _read_first(path[: -len("_input")] + "_label") or ""
+                inputs.append((chip, label, path))
+        self._inputs = inputs
+        self._found_at = self._clock()
+
+    def sensors_temperatures(self, cpu_only: bool = False) -> dict:
+        """Current readings, psutil-shaped; {} when the machine has no hwmon.
+
+        cpu_only reads just the CPU's own chip (cheap, every second); other
+        chips sit on slow buses (DDR5 SPD, Super-IO) and are read less often.
+        A machine with no known CPU chip is read in full.
+        """
+        if self._found_at is None or self._clock() - self._found_at > self._REDISCOVER_S:
+            self._discover()
+        inputs = self._inputs
+        if cpu_only:
+            cpu = [i for i in inputs if i[0] in _CPU_CHIPS]
+            inputs = cpu or inputs
+        out: dict = {}
+        for chip, label, path in inputs:
+            raw = _read_first(path)
+            if raw is None:
+                self._found_at = None
+                continue
+            try:
+                value = int(raw) / 1000.0
+            except ValueError:
+                continue
+            out.setdefault(chip, []).append(_HwReading(label, value))
+        return out
+
+
+@dataclass
+class _HwReading:
+    """One hwmon temperature, shaped like psutil's shwtemp for our readers."""
+    label: str
+    current: float
+
+
+def _read_first(path: str) -> Optional[str]:
+    """First line of a small sysfs file, stripped; None when unreadable."""
+    try:
+        with open(path, encoding="ascii", errors="replace") as fh:
+            return fh.readline().strip()
+    except OSError:
+        return None
+
+
+class _SensorsOnce:
+    """psutil, but every hwmon temperature is read once per snapshot.
+
+    sensors_temperatures() walks every hwmon file (~40 ms here) and both the
+    CPU temperature and the temperature list need it.
+    """
+
+    def __init__(self, ps, fast: Optional[HwmonTemps] = None,
+                 cpu_only: bool = False) -> None:
+        self._ps = ps
+        self._fast = fast
+        self._cpu_only = cpu_only
+        self._temps = None
+
+    def sensors_temperatures(self):
+        if self._temps is None:
+            temps = (self._fast.sensors_temperatures(cpu_only=self._cpu_only)
+                     if self._fast else {})
+            self._temps = temps or self._ps.sensors_temperatures()
+        return self._temps
+
+    def __getattr__(self, name):
+        return getattr(self._ps, name)
 
 
 def uptime_seconds(ps, now: Callable[[], float] = time.time) -> float:
@@ -671,13 +795,16 @@ class CpuSampler:
         self._ps = ps
         self._model = cpu_model(read)
 
-    def sample(self) -> CpuInfo:
-        """Take one CPU sample (non-blocking, uses psutil deltas)."""
+    def sample(self, sensors=None) -> CpuInfo:
+        """Take one CPU sample (non-blocking, uses psutil deltas).
+
+        sensors is what to read the temperature from (default: psutil).
+        """
         percent = self._ps.cpu_percent(interval=None)
         per_core = self._ps.cpu_percent(interval=None, percpu=True)
         freq_obj = self._ps.cpu_freq()
         freq_mhz = freq_obj.current if freq_obj else 0.0
-        temp = cpu_temp(self._ps)
+        temp = cpu_temp(sensors if sensors is not None else self._ps)
         return CpuInfo(
             model=self._model,
             percent=percent,

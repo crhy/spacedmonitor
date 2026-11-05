@@ -213,10 +213,13 @@ class Meter(Gtk.DrawingArea):
         self.connect("draw", self._on_draw)
 
     def set_value(self, fraction: float, colour=None) -> None:
-        """Set the fill fraction and optional colour, then redraw."""
-        self._fraction = _clamp(fraction)
-        if colour is not None:
-            self._colour = colour
+        """Set the fill fraction and optional colour; redraw only on a change."""
+        fraction = _clamp(fraction)
+        colour = self._colour if colour is None else colour
+        if fraction == self._fraction and colour == self._colour:
+            return
+        self._fraction = fraction
+        self._colour = colour
         self.queue_draw()
 
     def _on_draw(self, da, cr) -> None:

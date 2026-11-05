@@ -74,8 +74,8 @@ class TestNvmlProcessParsing(unittest.TestCase):
         assert result == {100: 2048, 200: 4096}
 
     def test_gpu_mem_falls_back(self):
-        """When NVML returns empty, nvidia-smi compute-apps is used."""
-        with patch("spaced_monitor.processes._nvml_gpu_mem", return_value={}):
+        """When NVML is unavailable, nvidia-smi compute-apps is used."""
+        with patch("spaced_monitor.processes._nvml_gpu_mem", return_value=None):
             result = _gpu_mem_by_pid(run=lambda cmd, timeout=None: "111, 2048\n222, 512")
         assert result == {111: 2048 * 1024 * 1024, 222: 512 * 1024 * 1024}
 
@@ -86,11 +86,20 @@ class TestNvmlProcessParsing(unittest.TestCase):
             result = _gpu_sm_by_pid(run=lambda cmd, timeout=None: "unused")
         assert result == {42: 55.0}
 
+    def test_empty_nvml_answer_spawns_no_nvidia_smi(self):
+        """No GPU process right now is an answer: nvidia-smi must not run every 2 s."""
+        def run(cmd, timeout=None):
+            raise AssertionError("nvidia-smi was spawned: %s" % cmd)
+        with patch("spaced_monitor.processes._nvml_gpu_mem", return_value={}), \
+                patch("spaced_monitor.processes._nvml_gpu_sm", return_value={}):
+            assert _gpu_mem_by_pid(run=run) == {}
+            assert _gpu_sm_by_pid(run=run) == {}
+
     def test_gpu_sm_falls_back(self):
-        """When NVML returns empty, nvidia-smi pmon is used."""
+        """When NVML is unavailable, nvidia-smi pmon is used."""
         pmon = ("#    gpu    pid    type    sm    mem\n"
                 "    0      1234    C     75     50\n")
-        with patch("spaced_monitor.processes._nvml_gpu_sm", return_value={}):
+        with patch("spaced_monitor.processes._nvml_gpu_sm", return_value=None):
             result = _gpu_sm_by_pid(run=lambda cmd, timeout=None: pmon)
         assert result == {1234: 75.0}
 

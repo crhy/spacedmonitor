@@ -125,8 +125,8 @@ def gpu_runner(pmon=PMON, compute=COMPUTE):
 class TestSampler(unittest.TestCase):
     def setUp(self):
         import unittest.mock
-        self._pm = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_mem", return_value={})
-        self._ps = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_sm", return_value={})
+        self._pm = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_mem", return_value=None)
+        self._ps = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_sm", return_value=None)
         self._pm.start()
         self._ps.start()
         self.addCleanup(self._pm.stop)
@@ -168,6 +168,26 @@ class TestSampler(unittest.TestCase):
         procs = [FakeProcess(40, name="bash", cmdline=["bash", "-c", "sleep 9"]),
                  FakeProcess(41, name="bash", cmdline=["bash", "-c", "make all"])]
         assert len(self._sampler(procs).sample()) == 2
+
+    def test_static_fields_read_once_per_pid(self):
+        """name/user/exe/cmdline do not change: one read per pid, not per sample."""
+        calls = []
+
+        class Counting(FakeProcess):
+            def name(self):
+                calls.append(self.pid)
+                return super().name()
+
+        a, b = Counting(50, name="brave"), Counting(51, name="mpv")
+        ps = FakePs([a, b])
+        sampler = ProcessSampler(ps=ps, clock=FakeClock(0.0),
+                                 gpu_run=lambda cmd, timeout=None: "")
+        for _ in range(3):
+            sampler.sample()
+        assert sorted(calls) == [50, 51], calls
+        del ps._by_pid[51]                     # mpv exits
+        sampler.sample()
+        assert 51 not in sampler._static and 51 not in sampler._procs
 
     def test_per_user_split(self):
         procs = [FakeProcess(20, name="worker", user="rhy"),
@@ -251,8 +271,8 @@ class TestSampler(unittest.TestCase):
 class TestGpuParsing(unittest.TestCase):
     def setUp(self):
         import unittest.mock
-        self._pm = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_mem", return_value={})
-        self._ps = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_sm", return_value={})
+        self._pm = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_mem", return_value=None)
+        self._ps = unittest.mock.patch("spaced_monitor.processes._nvml_gpu_sm", return_value=None)
         self._pm.start()
         self._ps.start()
         self.addCleanup(self._pm.stop)

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import pwd
 import signal
@@ -240,26 +241,28 @@ def _default_run(cmd: list, timeout: float = 2.0) -> str:
     return res.stdout
 
 
-def _nvml_gpu_mem() -> dict[int, int]:
-    """Per-pid GPU memory via NVML; empty dict when NVML is unavailable."""
+def _nvml_gpu_mem() -> Optional[dict[int, int]]:
+    """Per-pid GPU memory via NVML; None when NVML is unavailable."""
     from spaced_monitor import nvml
     if not nvml.available():
-        return {}
+        return None
     return nvml.compute_processes(0)
 
 
-def _nvml_gpu_sm() -> dict[int, float]:
-    """Per-pid GPU SM utilisation via NVML; empty dict when NVML is unavailable."""
+def _nvml_gpu_sm() -> Optional[dict[int, float]]:
+    """Per-pid GPU SM utilisation via NVML; None when NVML is unavailable."""
     from spaced_monitor import nvml
     if not nvml.available():
-        return {}
+        return None
     return nvml.process_utilization(0)
 
 
 def _gpu_mem_by_pid(run: Callable = None) -> dict[int, int]:
     """Per-pid GPU memory in bytes: NVML first, nvidia-smi compute-apps as fallback."""
+    # An empty NVML answer means "no GPU process right now", not "ask again":
+    # nvidia-smi is only for machines where NVML cannot be loaded.
     result = _nvml_gpu_mem()
-    if result:
+    if result is not None:
         return result
     if run is None:
         run = _default_run
@@ -286,7 +289,7 @@ def _gpu_mem_by_pid(run: Callable = None) -> dict[int, int]:
 def _gpu_sm_by_pid(run: Callable = None) -> dict[int, float]:
     """Per-pid GPU SM utilisation percent: NVML first, nvidia-smi pmon as fallback."""
     result = _nvml_gpu_sm()
-    if result:
+    if result is not None:
         return result
     if run is None:
         run = _default_run
@@ -327,6 +330,15 @@ def _safe_cmdline(proc) -> list:
         return []
 
 
+_KERNEL_THREAD = object()   # marks a pid that is a kernel thread (skipped)
+
+
+def _oneshot(proc):
+    """psutil's oneshot() batching when available (fakes in tests lack it)."""
+    one = getattr(proc, "oneshot", None)
+    return one() if one is not None else contextlib.nullcontext()
+
+
 class ProcessSampler:
     """Group processes into apps and sample their usage over time."""
 
@@ -341,6 +353,7 @@ class ProcessSampler:
         self._gpu_run = gpu_run
         self._procs: dict[int, object] = {}
         self._io: dict[int, tuple[int, int]] = {}
+        self._static: dict[int, object] = {}
         self._prev_t: Optional[float] = None
 
     def _has_exe(self, proc) -> bool:
@@ -380,8 +393,8 @@ class ProcessSampler:
         gpu_sm = _gpu_sm_by_pid(self._gpu_run)
         cpu_n = self._ps.cpu_count() or 1
         groups: dict[tuple[str, str], dict] = {}
-        live: set[int] = set()
-        for pid in self._ps.pids():
+        pids = self._ps.pids()
+        for pid in pids:
             proc = self._procs.get(pid)
             if proc is None:
                 try:
@@ -390,21 +403,30 @@ class ProcessSampler:
                     continue
                 self._procs[pid] = proc
             try:
-                if self._is_kernel_thread(proc):
-                    continue
-                name = proc.name()
-                user = proc.username()
-                cpu = proc.cpu_percent(interval=None)
-                rss = proc.memory_info().rss
+                # oneshot() reads /proc/<pid>/stat and status once for all the
+                # calls below; name, user, exe and cmdline never change for a
+                # running process, so they are read once per pid.
+                with _oneshot(proc):
+                    static = self._static.get(pid)
+                    if static is None:
+                        if self._is_kernel_thread(proc):
+                            self._static[pid] = _KERNEL_THREAD
+                            continue
+                        static = (proc.name(), proc.username(),
+                                  _safe_exe(proc), _safe_cmdline(proc))
+                        self._static[pid] = static
+                    elif static is _KERNEL_THREAD:
+                        continue
+                    cpu = proc.cpu_percent(interval=None)
+                    rss = proc.memory_info().rss
+                    disk = self._io_delta(proc, pid)
             except self._ps.NoSuchProcess:
                 self._procs.pop(pid, None)
+                self._static.pop(pid, None)
                 continue
             except (self._ps.AccessDenied, self._ps.ZombieProcess):
                 continue
-            live.add(pid)
-            exe = _safe_exe(proc)
-            cmdl = _safe_cmdline(proc)
-            disk = self._io_delta(proc, pid)
+            name, user, exe, cmdl = static
             g = groups.setdefault(_group_key(name, user, cmdl), {
                 "pids": [], "cpu": 0.0, "rss": 0, "gpu_percent": 0.0,
                 "gpu_mem": 0, "disk": 0, "children": [],
@@ -421,10 +443,12 @@ class ProcessSampler:
             g["gpu_percent"] += gpu_sm.get(pid, 0.0)
             g["gpu_mem"] += gpu_mem.get(pid, 0)
             g["disk"] += disk
+        present = set(pids)
         for pid in list(self._procs):
-            if pid not in live:
+            if pid not in present:
                 self._procs.pop(pid, None)
                 self._io.pop(pid, None)
+                self._static.pop(pid, None)
         rows = []
         for (key, user), g in groups.items():
             name = key.split("\0", 1)[0]

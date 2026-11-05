@@ -100,6 +100,12 @@ def _title(text: str) -> Gtk.Label:
     return lbl
 
 
+def _set_pos(paned: Gtk.Paned, pos: int) -> None:
+    """Move a Paned divider only when it really moves (each move relayouts)."""
+    if paned.get_position() != pos:
+        paned.set_position(pos)
+
+
 class FooterItem(Gtk.Box):
     """One footer cell: an icon beside a muted label above a value."""
 
@@ -288,10 +294,17 @@ class MonitorWindow(Gtk.Window):
         self._user_dragged = True
         GLib.timeout_add(300, self._do_save_panes)
 
-    def _on_overview_resize(self, _widget, _allocation) -> None:
-        """Re-apply saved fractions on every resize unless user dragged this session."""
-        if self._user_dragged:
+    def _on_overview_resize(self, _widget, allocation) -> None:
+        """Re-apply saved fractions when the overview's size changes.
+
+        size-allocate also fires for every relayout at the same size (and
+        set_position below causes one), so only a real size change counts:
+        reacting to all of them re-laid the window out at frame rate.
+        """
+        size = (allocation.width, allocation.height)
+        if self._user_dragged or size == getattr(self, "_ov_size", None):
             return
+        self._ov_size = size
         GLib.timeout_add(0, self._apply_fractions)
 
     def _apply_fractions(self) -> bool:
@@ -302,13 +315,13 @@ class MonitorWindow(Gtk.Window):
             return False
         fr = self._pane_fracs
         pos = max(int(fr["pane_gauges"] * ov_h), self._GAUGE_MIN_H)
-        self._paned_outer.set_position(pos)
+        _set_pos(self._paned_outer, pos)
         inner_h = ov_h - pos
-        self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
+        _set_pos(self._paned_inner, int(fr["pane_graphs"] * inner_h))
         self._set_mid_orientation(ov_w)
         _horizontal, extent = self._mid_extent(
             ov_w, self._paned_inner.get_allocated_height() or ov_h)
-        self._paned_mid_h.set_position(int(fr["pane_mid_h"] * extent))
+        _set_pos(self._paned_mid_h, int(fr["pane_mid_h"] * extent))
         return False
 
     def _do_save_panes(self) -> bool:
@@ -356,6 +369,18 @@ class MonitorWindow(Gtk.Window):
             return
         self._tab = name
         self._show_tab()
+        self._refresh_visible_page()
+
+    def _refresh_visible_page(self) -> None:
+        """Give a page that just became visible the latest data at once."""
+        snap = getattr(self, "_snapshot", None)
+        apps = getattr(self, "_apps_latest", None)
+        if self._tab == "hardware" and snap is not None:
+            self._hardware_page.update(snap)
+        elif self._tab == "overview" and apps is not None:
+            self._app_table.set_apps(apps)
+        elif self._tab == "processes" and apps is not None:
+            self._processes_page.set_apps(apps)
 
     def show_tab_only(self) -> None:
         """After show_all(): hide every page but the selected one again."""
@@ -419,14 +444,23 @@ class MonitorWindow(Gtk.Window):
         self._disk_card.update(snap)
         self._net_card.update(snap)
         self._update_footer(snap)
-        self._hardware_page.update(snap)
+        # Hidden pages are not rebuilt every second; _refresh_visible_page
+        # catches them up when they are shown.
+        if self._tab == "hardware":
+            self._hardware_page.update(snap)
         self._status_lbl.set_text("Updated just now")
         return False
 
     def _apply_apps(self, apps: list) -> bool:
-        """Hand the process sampler's app list to both app lists."""
-        self._app_table.set_apps(apps)
-        self._processes_page.set_apps(apps)
+        """Hand the process sampler's app list to the app list on screen.
+
+        Both lists rebuild every row's widgets, so only the visible one does.
+        """
+        self._apps_latest = apps
+        if self._tab == "overview":
+            self._app_table.set_apps(apps)
+        elif self._tab == "processes":
+            self._processes_page.set_apps(apps)
         return False
 
     def _update_footer(self, snap: Snapshot) -> None:
