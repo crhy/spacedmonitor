@@ -35,3 +35,12 @@ RAPL: Spaced Monitor's .deb ships /usr/lib/udev/rules.d/60-spaced-monitor-rapl.r
 **Standing order (rhY, 2026-10-31 ~12:10):** once Spaced Monitor is polished (q03-q05, q06 layout-final, th01 and q07 final-polish done; check the 4-size screenshots), review the
 screenshots, run the gate, merge ab/strata into main, PUSH to crhy/spacedmonitor, build the .deb and INSTALL it on rhY's
 machine (sudo apt install ./build/spaced-monitor_*_all.deb). Fix real problems first rather than install something broken.
+
+**Release audit 2026-11-04 (rhY: "finish the spacedmonitor work yourself and push it"):** Claude did it directly (not Strata).
+0.1.5 pushed to crhy/spacedmonitor main (003a77b): end-process safety (pid-reuse-safe SIGKILL, desktop-session
+processes refused, interpreters grouped per script), Depends python3-gi-cairo (clean installs could not draw), CPU
+10.8% -> 2.2% (layout loop, row reuse, NVML-empty no longer spawns nvidia-smi, slow sensors every 5 s, psutil oneshot),
+memory bar no longer double-counts shmem, theme button/meter palette fixes, launcher prefers its checkout, deb gate in
+check.sh. Audit worktree ~/spacedmonitor-audit (branch release-audit). The GitHub release v0.1.5 was NOT created
+(blocked by permissions): deb + notes in ~/spacedmonitor-audit/build/; README already points at 0.1.5, so the release
+must be published (or README reverted). Not yet in spaced-apt / config/external-artifacts.conf.
