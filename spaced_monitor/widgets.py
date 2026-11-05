@@ -212,6 +212,13 @@ class Meter(Gtk.DrawingArea):
         self.set_size_request(60, 12)
         self.connect("draw", self._on_draw)
 
+    def set_palette(self, pal, colour=None) -> None:
+        """Switch theme palette (track colour) and optionally the fill colour."""
+        self._pal = pal
+        if colour is not None:
+            self._colour = colour
+        self.queue_draw()
+
     def set_value(self, fraction: float, colour=None) -> None:
         """Set the fill fraction and optional colour; redraw only on a change."""
         fraction = _clamp(fraction)

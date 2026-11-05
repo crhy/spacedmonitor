@@ -610,7 +610,7 @@ class _MemoryCard(_HCard):
         self._bar.set_segments([
             (mem.apps / total, self._pal.cpu_start),
             (mem.cache / total, self._pal.gpu_memory_start),
-            (max(0, mem.available) / total, self._pal.cpu_end),
+            (max(0, mem.available - mem.cache) / total, self._pal.cpu_end),
         ])
         self._lines[0].set_label(
             f"apps {fmt.bytes_gb(mem.apps)}  cache {fmt.bytes_gb(mem.cache)}")

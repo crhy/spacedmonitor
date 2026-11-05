@@ -280,7 +280,7 @@ class TestSnapshot(unittest.TestCase):
             sensors_temperatures=lambda: {"k10temp": [types.SimpleNamespace(label="Tctl", current=61.0)]},
             sensors_fans=lambda: {"fanx": [types.SimpleNamespace(label="Chassis", current=1200.0)]},
             virtual_memory=lambda: types.SimpleNamespace(
-                total=8000, available=2000, buffers=300, cached=700),
+                total=8000, available=2000, free=1000, buffers=300, cached=700),
             swap_memory=lambda: types.SimpleNamespace(total=1000, used=100, percent=10),
             boot_time=lambda: time.time() - 100.0,
             disk_io_counters=lambda: types.SimpleNamespace(read_bytes=1000, write_bytes=500),

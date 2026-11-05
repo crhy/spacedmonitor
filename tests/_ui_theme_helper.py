@@ -79,6 +79,17 @@ def main() -> int:
     GLib.timeout_add_seconds(2, _quit)
     Gtk.main()
 
+    # A theme switch must reach every widget: the toggle keeps a visible icon
+    # and the overview process list's meters take the new palette.
+    child = win._theme_btn.get_child()
+    if child is None or not child.get_visible():
+        print("FAIL: theme button lost its icon after the theme switch", file=sys.stderr)
+        return 1
+    stale = [m for row in win._app_table._rows for m in row["meters"] if m._pal is not win._pal]
+    if stale:
+        print(f"FAIL: {len(stale)} process-list meters kept the old palette", file=sys.stderr)
+        return 1
+
     # Capture.
     gdk_win = win.get_window()
     if gdk_win is None:

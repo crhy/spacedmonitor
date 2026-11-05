@@ -278,7 +278,10 @@ def memory(ps) -> MemInfo:
     return MemInfo(
         total=vm.total,
         apps=vm.total - vm.available,
-        cache=vm.buffers + vm.cached,
+        # Only the cache the kernel can hand back: buffers+cached also counts
+        # shared memory (tmpfs, GPU/IPC buffers) that is already in "apps", so
+        # apps + cache + free must add up to total.
+        cache=max(0, vm.available - vm.free),
         available=vm.available,
         swap_used=sw.used,
         swap_total=sw.total,

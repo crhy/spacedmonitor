@@ -256,6 +256,14 @@ class AppTable(Gtk.Box):
         self._apps = self._visible()
         self._rebuild()
 
+    def set_palette(self, pal) -> None:
+        """Recolour the meters for a new theme (rows are reused, not rebuilt)."""
+        self._pal = pal
+        colours = (pal.cpu_start, pal.ram_start, pal.gpu_memory_start, pal.disk_read)
+        for row in self._rows:
+            for meter, colour in zip(row["meters"], colours):
+                meter.set_palette(pal, colour)
+
     def _on_end_row(self, _btn, index: int) -> None:
         """End the app shown in this row right now."""
         if index < len(self._apps):

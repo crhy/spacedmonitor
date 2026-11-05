@@ -103,6 +103,7 @@ class TestFans(unittest.TestCase):
 class TestMemory(unittest.TestCase):
     def test_arithmetic(self):
         vm = types.SimpleNamespace(total=32 * 1024**3, available=20 * 1024**3,
+                                   free=14 * 1024**3,
                                    buffers=2 * 1024**3, cached=4 * 1024**3)
         sw = types.SimpleNamespace(used=1 * 1024**3, total=2 * 1024**3)
         ps = types.SimpleNamespace(virtual_memory=lambda: vm, swap_memory=lambda: sw)
@@ -114,6 +115,16 @@ class TestMemory(unittest.TestCase):
         assert mi.available == 20 * gib
         assert mi.swap_used == 1 * gib
         assert mi.swap_total == 2 * gib
+
+    def test_segments_never_exceed_total_with_shared_memory(self):
+        """20 GB of shmem counts in buffers+cached and in apps: no double count."""
+        gib = 1024**3
+        vm = types.SimpleNamespace(total=30 * gib, available=4 * gib, free=gib // 2,
+                                   buffers=gib // 16, cached=23 * gib)
+        sw = types.SimpleNamespace(used=0, total=0)
+        mi = memory(types.SimpleNamespace(virtual_memory=lambda: vm, swap_memory=lambda: sw))
+        free = mi.available - mi.cache
+        self.assertEqual(mi.apps + mi.cache + free, mi.total)
 
 
 class TestUptime(unittest.TestCase):

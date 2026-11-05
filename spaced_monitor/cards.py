@@ -358,16 +358,17 @@ class MemoryCard(_MemoryLikeCard):
         self._big_lbl.set_text(fmt.pair_gb(used, mem.total))
         self._pct_lbl.set_text(f"{int(round(pct))}% used")
         total = mem.total or 1
+        free = max(0, mem.available - mem.cache)   # apps + cache + free = total
         segs = [
             (mem.apps / total, self._pal.cpu_start),
             (mem.cache / total, self._pal.gpu_memory_start),
-            (mem.available / total, self._pal.cpu_end),
+            (free / total, self._pal.cpu_end),
         ]
         self._bar.set_segments(segs)
         self._legend.set_text(
             f"Apps {fmt.bytes_gb(mem.apps)}  "
             f"Cache {fmt.bytes_gb(mem.cache)}  "
-            f"Available {fmt.bytes_gb(mem.available)}"
+            f"Free {fmt.bytes_gb(free)}"
         )
         self.queue_fit()
 

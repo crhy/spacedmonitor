@@ -73,14 +73,27 @@ def _is_interpreter(name: str) -> bool:
     return low in _GENERIC_INTERPRETERS
 
 
+# Interpreter options whose next argument is a value, not the script
+# (python -W/-X, node -r/--require, bash/sh -o/-O, perl -I, java -cp ...).
+_VALUE_OPTIONS = frozenset(("-W", "-X", "--check-hash-based-pycs", "-r", "--require",
+                            "-o", "-O", "+O", "-I", "-cp", "-classpath", "--class-path"))
+
+
 def _script_of(cmdline: list) -> str:
     """The script or module an interpreter runs ('' when none): its identity."""
     args = list(cmdline or [])[1:]
+    skip = False
     for i, arg in enumerate(args):
+        if skip:
+            skip = False
+            continue
         if arg == "-m" and i + 1 < len(args):
             return "-m " + args[i + 1]
         if arg == "-c":
             return "-c " + (args[i + 1] if i + 1 < len(args) else "")
+        if arg in _VALUE_OPTIONS:
+            skip = True
+            continue
         if not arg.startswith("-"):
             return arg
     return ""

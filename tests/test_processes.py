@@ -162,6 +162,9 @@ class TestSampler(unittest.TestCase):
         assert display_name("python3.14", cmdline=["python3.14", "-m", "pkg.main"]) == "Pkg"
         assert display_name("bash", cmdline=["bash", "/home/u/run-all.sh"]) == "Run-all"
         assert display_name("python3", cmdline=["/usr/bin/python3"]) == "Python"
+        assert display_name("python3", cmdline=["python3", "-W", "error::ResourceWarning",
+                                                 "-m", "unittest"]) == "Unittest"
+        assert display_name("node", cmdline=["node", "-r", "ts-node/register", "app.ts"]) == "App"
 
     def test_inline_commands_are_separate_apps(self):
         """Each `bash -c <command>` is its own program."""

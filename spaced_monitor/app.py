@@ -208,6 +208,7 @@ class MonitorWindow(Gtk.Window):
             self._theme_btn.remove(child)
         img = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.SMALL_TOOLBAR)
         self._theme_btn.add(img)
+        img.show()   # added after show_all(): without this the button goes blank
 
     def _build_overview(self) -> Gtk.Paned:
         """Overview page: three resizable sections via nested vertical Paned."""
@@ -536,6 +537,7 @@ class MonitorWindow(Gtk.Window):
                      self._mem_card, self._gmem_card,
                      self._temp_card, self._disk_card, self._net_card):
             card.set_palette(pal)
+        self._app_table.set_palette(pal)
         self._processes_page.set_palette(pal)
         self._hardware_page.set_palette(pal)
         self._show_tab()
