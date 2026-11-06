@@ -245,18 +245,33 @@ def parse_ip_addr(out: str) -> dict:
         data = json.loads(out)
     except (ValueError, TypeError):
         return {}
+    if not isinstance(data, list):
+        return {}
     result: dict[str, str] = {}
     for entry in data:
-        name = entry.get("addr") if isinstance(entry, dict) else None
-        if not isinstance(name, str):
+        name = entry.get("ifname") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not name:
             continue
-        for block in entry.get("info") or []:
-            if not isinstance(block, dict) or block.get("family") != 2:
+        blocks = entry.get("addr_info")
+        if not isinstance(blocks, list):
+            continue
+        ipv6 = None
+        for block in blocks:
+            if not isinstance(block, dict):
                 continue
-            fields = ((block.get("addr") or [""])[0]).split()
-            if len(fields) >= 2:
-                result[name] = fields[1].split("/")[0]
-            break
+            address = block.get("local")
+            if not isinstance(address, str) or not address:
+                continue
+            if block.get("family") == "inet":
+                result[name] = address
+                break
+            if block.get("family") == "inet6":
+                # Prefer a global IPv6 address over a link-local fallback,
+                # but keep looking for IPv4 regardless of JSON ordering.
+                if ipv6 is None or block.get("scope") == "global":
+                    ipv6 = address
+        if name not in result and ipv6 is not None:
+            result[name] = ipv6
     return result
 
 
@@ -637,9 +652,9 @@ class Sampler:
         self._extra: Optional[GpuExtra] = None
         self._extra_read = False
 
-    def _interfaces(self) -> list:
-        """Merge the once-read addresses with the current per-interface rates."""
-        if self._addresses is None:
+    def _interfaces(self, refresh: bool = False) -> list:
+        """Refresh DHCP/VPN addresses on the slow cadence, not every sample."""
+        if refresh or self._addresses is None:
             self._addresses = self._iface_fn()
         rates = self._rates.per_interface
         return [Interface(name, self._addresses.get(name), rates[name][0], rates[name][1])
@@ -678,7 +693,7 @@ class Sampler:
             uptime_s=uptime_seconds(self._ps),
             temperatures=self._temps_last,
             filesystems=filesystems(self._ps),
-            interfaces=self._interfaces(),
+            interfaces=self._interfaces(refresh=slow),
             gpu_extra=self._gpu_extra() if info else None,
         )
 
