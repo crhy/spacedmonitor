@@ -413,14 +413,14 @@ def _dot(pal, colour: tuple[float, float, float], text: str) -> str:
 
 
 class TemperatureCard(Gtk.Box):
-    """Temperature card: CPU/GPU line graph with an 80 °C threshold."""
+    """Temperature card: CPU/GPU line graph with a 176 °F threshold."""
 
     def __init__(self, pal) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.get_style_context().add_class("card")
         self._pal = pal
-        self._graph = LineGraph([pal.cpu_temp, pal.gpu_temp], 30, 90,
-                                pal=pal, threshold=80, unit="°C", seconds=300)
+        self._graph = LineGraph([pal.cpu_temp, pal.gpu_temp], 86, 194,
+                                pal=pal, threshold=176, unit="°F", seconds=300)
         self._title_lbl = _title("Temperature · last 5 minutes")
         self._cpu_lbl = _muted("")
         self._gpu_lbl = _muted("")
@@ -446,11 +446,13 @@ class TemperatureCard(Gtk.Box):
         self._render_legend()
 
     def update(self, snapshot) -> None:
-        """Push CPU/GPU temps and widen the y range when outside 30-90."""
+        """Push CPU/GPU temps and widen the Fahrenheit range when needed."""
         cpu = snapshot.cpu.temp_c
         gpu = snapshot.gpu.temp_c if snapshot.gpu else None
-        self._graph.push((cpu, gpu))
-        vals = [v for v in (cpu, gpu) if v is not None]
+        cpu_f = fmt.fahrenheit(cpu)
+        gpu_f = fmt.fahrenheit(gpu)
+        self._graph.push((cpu_f, gpu_f))
+        vals = [v for v in (cpu_f, gpu_f) if v is not None]
         if vals:
             self._graph.expand_range(min(vals), max(vals))
         self._cpu_val, self._gpu_val = cpu, gpu

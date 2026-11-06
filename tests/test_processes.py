@@ -154,11 +154,12 @@ class TestSampler(unittest.TestCase):
         by_pids = sorted(sorted(r.pids) for r in rows)
         assert by_pids == [[30, 32], [31]], by_pids
         names = sorted(display_name(r.name, exe=r.exe, cmdline=r.cmdline) for r in rows)
-        assert names == ["Spaced_monitor", "Voxa"], names
+        assert names == ["Spaced Monitor", "Voxa"], names
 
     def test_interpreter_display_names(self):
         """The script, not the interpreter, names the app."""
         assert display_name("python3", cmdline=["/usr/bin/python3", "/x/app.py"]) == "App"
+        assert display_name("python3", cmdline=["python3", "-m", "spaced_monitor"]) == "Spaced Monitor"
         assert display_name("python3.14", cmdline=["python3.14", "-m", "pkg.main"]) == "Pkg"
         assert display_name("bash", cmdline=["bash", "/home/u/run-all.sh"]) == "Run-all"
         assert display_name("python3", cmdline=["/usr/bin/python3"]) == "Python"

@@ -267,7 +267,8 @@ def _tab_switch_check() -> None:
     apps = _mock_apps()
     win = MonitorWindow(sampler=lambda: snap, refresh_ms=1000,
                         proc_sampler=lambda: apps)
-    win.show()
+    win.show_all()
+    win.show_tab_only()
     for tab in ("overview", "processes", "hardware", "overview"):
         win._on_tab(None, tab)
         assert win._tab == tab, win._tab
@@ -278,10 +279,20 @@ def _tab_switch_check() -> None:
         assert selected == [tab], selected
     win._apply_snapshot(snap)
     win._apply_apps(apps)
+    win._on_tab(None, "overview")
+    win._focus_card(win._temp_card)
+    assert win._focused_card is win._temp_card
+    assert win._temp_card.get_visible()
+    assert not win._paned_outer.get_child1().get_visible()
+    assert not win._paned_mid_h.get_child2().get_visible()
+    win._restore_focused_card()
+    assert win._focused_card is None
+    assert win._paned_outer.get_child1().get_visible()
+    assert win._paned_mid_h.get_child2().get_visible()
     win._on_tab(None, "hardware")
     win._apply_snapshot(snap)
     win.close()
-    print("OK: MonitorWindow switches tabs and updates all three pages")
+    print("OK: MonitorWindow switches tabs, focuses cards and updates all pages")
 
 
 def main() -> int:

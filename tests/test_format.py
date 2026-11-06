@@ -4,7 +4,8 @@
 import unittest
 
 from spaced_monitor.format import (
-    EMDASH, bytes_gb, pair_gb, rate, temp, ghz, watts, rpm, duration, percent,
+    EMDASH, bytes_gb, pair_gb, rate, fahrenheit, temp, ghz, watts, rpm,
+    duration, percent,
 )
 
 
@@ -67,17 +68,22 @@ class TestRate(unittest.TestCase):
 
 
 class TestTemp(unittest.TestCase):
+    def test_fahrenheit_conversion(self):
+        self.assertEqual(fahrenheit(0), 32.0)
+        self.assertEqual(fahrenheit(100), 212.0)
+        self.assertIsNone(fahrenheit(None))
+
     def test_none(self):
         self.assertEqual(temp(None), EMDASH)
 
     def test_rounds(self):
-        self.assertEqual(temp(62.4), "62 °C")
+        self.assertEqual(temp(62.4), "144 °F")
 
     def test_rounds_up(self):
-        self.assertEqual(temp(62.6), "63 °C")
+        self.assertEqual(temp(62.6), "145 °F")
 
     def test_zero(self):
-        self.assertEqual(temp(0), "0 °C")
+        self.assertEqual(temp(0), "32 °F")
 
 
 class TestGhz(unittest.TestCase):
