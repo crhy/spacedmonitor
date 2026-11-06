@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Tests for the GPU, disk, network and power collectors."""
 
+import json
 import os
 import subprocess
 import tempfile
@@ -12,6 +13,7 @@ from spaced_monitor.collect import (
     Fan, Filesystem, GpuExtra, GpuInfo, DiskInfo, Interface, NetInfo,
     Snapshot, Temperature,
     nvidia_gpu, amd_gpu, gpu, RateSampler, CpuPower, Sampler,
+    parse_ip_addr, interface_addresses,
 )
 
 
@@ -201,6 +203,61 @@ class FakeClock:
         return self.t
 
 
+class TestInterfaceAddresses(unittest.TestCase):
+    """Use iproute2's actual JSON keys, not a collector-shaped fake."""
+
+    def test_iproute2_json(self):
+        output = json.dumps([
+            {"ifindex": 1, "ifname": "lo", "addr_info": [
+                {"family": "inet", "local": "127.0.0.1", "prefixlen": 8,
+                 "scope": "host"}]},
+            {"ifindex": 2, "ifname": "eth0", "addr_info": [
+                {"family": "inet6", "local": "fe80::1234", "scope": "link"},
+                {"family": "inet", "local": "192.0.2.42", "prefixlen": 24,
+                 "scope": "global"},
+                {"family": "inet", "local": "192.0.2.43", "prefixlen": 24,
+                 "scope": "global", "secondary": True}]},
+            {"ifindex": 3, "ifname": "wlan0", "addr_info": []},
+        ])
+        calls = []
+
+        def run(cmd, timeout=None):
+            calls.append((cmd, timeout))
+            return output
+
+        self.assertEqual(interface_addresses(run),
+                         {"lo": "127.0.0.1", "eth0": "192.0.2.42"})
+        self.assertEqual(calls, [(["ip", "-j", "addr", "show"], 2.0)])
+
+    def test_ipv6_only_prefers_global_address(self):
+        output = json.dumps([{"ifname": "eth0", "addr_info": [
+            {"family": "inet6", "local": "fe80::1", "scope": "link"},
+            {"family": "inet6", "local": "2001:db8::42", "scope": "global"},
+        ]}])
+        self.assertEqual(parse_ip_addr(output), {"eth0": "2001:db8::42"})
+
+    def test_malformed_output_is_ignored(self):
+        for output in ("", "not json", "null", "{}", "42", '"text"'):
+            with self.subTest(output=output):
+                self.assertEqual(parse_ip_addr(output), {})
+        output = json.dumps([
+            None, 42, {}, {"ifname": "eth0", "addr_info": 4},
+            {"ifname": "eth1", "addr_info": [None, 3, {},
+                {"family": "inet", "local": []},
+                {"family": "inet", "local": ""},
+                {"family": "other", "local": "not an address"}]},
+        ])
+        self.assertEqual(parse_ip_addr(output), {})
+
+    def test_unavailable_ip_is_nonfatal(self):
+        for error in (FileNotFoundError("ip"), OSError("unavailable"),
+                      subprocess.TimeoutExpired("ip", 2.0)):
+            with self.subTest(error=error):
+                def run(cmd, timeout=None):
+                    raise error
+                self.assertEqual(interface_addresses(run), {})
+
+
 class TestCpuPower(unittest.TestCase):
     """CpuPower reads the sysfs energy counter, or gives up quietly."""
 
@@ -318,6 +375,49 @@ class TestSnapshot(unittest.TestCase):
         sampler = Sampler(ps=self._ps(), read=lambda p: "", run=run,
                           drm_root="build/nope")
         assert sampler.sample().gpu is None
+
+    def test_interface_addresses_refresh_on_slow_cadence(self):
+        clock = FakeClock(0.0)
+        ps = self._ps()
+        calls = []
+        addresses = {"eth0": "192.0.2.42"}
+
+        def iface_fn():
+            calls.append(clock())
+            return addresses.copy()
+
+        sampler = Sampler(ps=ps, read=lambda p: "", clock=clock,
+                          gpu_fn=lambda: None, gpu_extra_fn=lambda: None,
+                          iface_fn=iface_fn)
+        self.assertEqual(sampler.sample().interfaces[0].address, "192.0.2.42")
+        addresses["eth0"] = "192.0.2.43"
+        for second in range(1, 5):
+            clock.t = float(second)
+            self.assertEqual(sampler.sample().interfaces[0].address, "192.0.2.42")
+        clock.t = 5.0
+        self.assertEqual(sampler.sample().interfaces[0].address, "192.0.2.43")
+        self.assertEqual(calls, [0.0, 5.0])
+
+        # Replacing an interface must discard its cached address too.
+        addresses.clear()
+        addresses["wlan0"] = "198.51.100.7"
+        ps.net_io_counters = lambda pernic=True: {"wlan0": io(20, 30)}
+        clock.t = 10.0
+        interfaces = sampler.sample().interfaces
+        self.assertEqual([(i.name, i.address) for i in interfaces],
+                         [("wlan0", "198.51.100.7")])
+        self.assertEqual(calls, [0.0, 5.0, 10.0])
+
+    def test_address_lookup_recovers_after_empty_result(self):
+        clock = FakeClock(0.0)
+        addresses = {}
+        sampler = Sampler(ps=self._ps(), read=lambda p: "", clock=clock,
+                          gpu_fn=lambda: None, gpu_extra_fn=lambda: None,
+                          iface_fn=lambda: addresses.copy())
+        self.assertIsNone(sampler.sample().interfaces[0].address)
+        addresses["eth0"] = "192.0.2.42"
+        clock.t = 5.0
+        self.assertEqual(sampler.sample().interfaces[0].address, "192.0.2.42")
 
 
 if __name__ == "__main__":
