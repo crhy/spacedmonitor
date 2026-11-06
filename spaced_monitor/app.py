@@ -146,7 +146,6 @@ class MonitorWindow(Gtk.Window):
         self._last_sample_time: float = 0.0
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._user_dragged = False
         self._pane_fracs = default_fractions()
         self._follow_desktop = True
         self._focused_card = None
@@ -270,8 +269,8 @@ class MonitorWindow(Gtk.Window):
         self._theme_btn.add(img)
         img.show()   # added after show_all(): without this the button goes blank
 
-    def _build_overview(self) -> Gtk.Paned:
-        """Overview page: three resizable sections via nested vertical Paned."""
+    def _build_overview(self) -> Gtk.ScrolledWindow:
+        """Resizable sections that scroll instead of clipping in small windows."""
         self._cpu_card = CpuCard(self._pal)
         self._gpu_card = GpuCard(self._pal)
         self._mem_card = MemoryCard(self._pal)
@@ -280,6 +279,9 @@ class MonitorWindow(Gtk.Window):
         self._disk_card = DiskCard(self._pal)
         self._net_card = NetworkCard(self._pal)
         self._app_table = AppTable(self._pal)
+        # Keep the search controls, column headers and several process rows
+        # usable even when the whole overview needs vertical scrolling.
+        self._app_table.set_size_request(-1, 180)
 
         gauges = _flow_row(4, 8)
         for card in (self._cpu_card, self._gpu_card,
@@ -289,6 +291,8 @@ class MonitorWindow(Gtk.Window):
             gauges.add(card)
 
         graphs = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        # Horizontal shrink must stay enabled so the window can cross the
+        # stacking breakpoint. Vertical shrink is disabled when stacked.
         graphs.pack1(self._temp_card, True, True)
         disk_net = _hbox(spacing=10)
         disk_net.pack_start(self._disk_card, expand=True, fill=True, padding=0)
@@ -297,20 +301,25 @@ class MonitorWindow(Gtk.Window):
         self._paned_mid_h = graphs
 
         inner = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        inner.pack1(graphs, True, True)
-        inner.pack2(self._app_table, True, True)
+        inner.pack1(graphs, True, False)
+        inner.pack2(self._app_table, True, False)
         self._paned_inner = inner
 
         outer = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
         outer.pack1(gauges, False, False)
-        outer.pack2(inner, True, True)
+        outer.pack2(inner, True, False)
         self._paned_outer = outer
 
-        outer.connect("drag-end", self._on_pane_drag)
-        inner.connect("drag-end", self._on_pane_drag)
-        graphs.connect("drag-end", self._on_pane_drag)
+        for paned in (outer, inner, graphs):
+            # GtkWidget::drag-end is drag-and-drop, not a divider drag.
+            paned.connect("button-release-event", self._on_pane_drag)
+            paned.connect_after("accept-position", self._on_pane_accept)
         outer.connect("size-allocate", self._on_overview_resize)
-        return outer
+        graphs.connect("size-allocate", self._on_graphs_resize)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(outer)
+        return scroll
 
     def _mid_extent(self, ov_w: int, graphs_h: int) -> tuple[bool, int]:
         """Extent (px) the graphs splitter runs along, given its orientation."""
@@ -335,25 +344,26 @@ class MonitorWindow(Gtk.Window):
                 else Gtk.Orientation.VERTICAL)
         if self._paned_mid_h.get_orientation() != want:
             self._paned_mid_h.set_orientation(want)
+            for child in self._paned_mid_h.get_children():
+                self._paned_mid_h.child_set_property(
+                    child, "shrink", want == Gtk.Orientation.HORIZONTAL)
 
     def _restore_panes(self) -> None:
         """Set Paned positions from saved fractions in settings."""
         settings = theme_mod.load_settings()
-        fr = load_pane_fractions(settings)
-        self._pane_fracs = fr
-        ov_h = self._overview.get_allocated_height() or 900
-        pos = max(int(fr["pane_gauges"] * ov_h), self._GAUGE_MIN_H)
-        self._paned_outer.set_position(pos)
-        inner_h = ov_h - pos
-        self._paned_inner.set_position(int(fr["pane_graphs"] * inner_h))
-        ov_w = self._overview.get_allocated_width() or 1400
-        self._set_mid_orientation(ov_w)
-        self._paned_mid_h.set_position(int(fr["pane_mid_h"] * ov_w))
+        self._pane_fracs = load_pane_fractions(settings)
+        self._apply_fractions()
 
-    def _on_pane_drag(self, paned, _handle, _is_reposition) -> None:
-        """Save pane fractions after the user stops dragging."""
-        self._user_dragged = True
-        GLib.timeout_add(300, self._do_save_panes)
+    def _on_pane_drag(self, _paned, event) -> bool:
+        """Save the completed drag before a subsequent resize can relayout."""
+        if event.button == Gdk.BUTTON_PRIMARY:
+            self._do_save_panes()
+        return False
+
+    def _on_pane_accept(self, _paned) -> bool:
+        """Persist a divider position accepted through keyboard navigation."""
+        self._do_save_panes()
+        return False
 
     def _on_overview_resize(self, _widget, allocation) -> None:
         """Re-apply saved fractions when the overview's size changes.
@@ -363,15 +373,17 @@ class MonitorWindow(Gtk.Window):
         reacting to all of them re-laid the window out at frame rate.
         """
         size = (allocation.width, allocation.height)
-        if self._user_dragged or size == getattr(self, "_ov_size", None):
+        if size == getattr(self, "_ov_size", None):
             return
         self._ov_size = size
         GLib.timeout_add(0, self._apply_fractions)
 
     def _apply_fractions(self) -> bool:
         """Set Paned positions from fractions (deferred to after layout pass)."""
-        ov_h = self._overview.get_allocated_height()
-        ov_w = self._overview.get_allocated_width()
+        # The content can be taller than the visible viewport. Fractions
+        # belong to that content, not to the clipped on-screen rectangle.
+        ov_h = self._paned_outer.get_allocated_height()
+        ov_w = self._paned_outer.get_allocated_width()
         if ov_h < 1 or ov_w < 1:
             return False
         fr = self._pane_fracs
@@ -380,23 +392,38 @@ class MonitorWindow(Gtk.Window):
         inner_h = ov_h - pos
         _set_pos(self._paned_inner, int(fr["pane_graphs"] * inner_h))
         self._set_mid_orientation(ov_w)
+        self._apply_mid_fraction()
+        return False
+
+    def _on_graphs_resize(self, _widget, allocation) -> None:
+        """Restore the split after its actual extent/orientation changes."""
+        size = (allocation.width, allocation.height,
+                self._paned_mid_h.get_orientation())
+        if size != getattr(self, "_graphs_size", None):
+            self._graphs_size = size
+            GLib.idle_add(self._apply_mid_fraction)
+
+    def _apply_mid_fraction(self) -> bool:
+        """Use the graph row's height, not the whole lower pane, when stacked."""
         _horizontal, extent = self._mid_extent(
-            ov_w, self._paned_inner.get_allocated_height() or ov_h)
-        _set_pos(self._paned_mid_h, int(fr["pane_mid_h"] * extent))
+            self._paned_mid_h.get_allocated_width(),
+            self._paned_mid_h.get_allocated_height())
+        _set_pos(self._paned_mid_h, int(self._pane_fracs["pane_mid_h"] * extent))
         return False
 
     def _do_save_panes(self) -> bool:
         """Persist current pane positions as fractions."""
-        ov_h = self._overview.get_allocated_height()
-        ov_w = self._overview.get_allocated_width()
+        ov_h = self._paned_outer.get_allocated_height()
+        ov_w = self._paned_outer.get_allocated_width()
         if ov_h < 1 or ov_w < 1:
             return False
         pos_m = self._paned_mid_h.get_position()
         pos_i = self._paned_inner.get_position()
         pos_g = self._paned_outer.get_position()
-        inner_h = ov_h - pos_g
+        inner_h = self._paned_inner.get_allocated_height()
         _horizontal, extent = self._mid_extent(
-            ov_w, self._paned_inner.get_allocated_height() or inner_h)
+            self._paned_mid_h.get_allocated_width(),
+            self._paned_mid_h.get_allocated_height())
         fracs = {
             "pane_gauges": pos_g / ov_h,
             "pane_graphs": pos_i / inner_h if inner_h > 0 else 0.28,
@@ -404,6 +431,7 @@ class MonitorWindow(Gtk.Window):
         }
         settings = theme_mod.load_settings()
         settings = save_pane_fractions(settings, fracs)
+        self._pane_fracs = load_pane_fractions(settings)
         theme_mod.save_settings(settings)
         return False
 
@@ -621,6 +649,8 @@ class MonitorApp(Gtk.Application):
         self._sampler = sampler
         self._refresh_ms = refresh_ms
         self._window: Optional[MonitorWindow] = None
+        self._status_source = 0
+        self._settings_handlers: list = []
 
     def do_startup(self) -> None:  # type: ignore[override]
         """Create the window on startup."""
@@ -637,11 +667,15 @@ class MonitorApp(Gtk.Application):
             refresh_ms=int(settings.get("refresh_ms", self._refresh_ms)),
             pal=pal,
         )
+        # Gtk.Application owns the loop while its registered window exists.
+        # Without this, run() returns immediately and a second Gtk.main()
+        # keeps an invisible process alive after the window is destroyed.
+        self.add_window(self._window)
         self._window.show_all()
         self._window.show_tab_only()
         self._window._restore_panes()
         self._window.start_worker()
-        GLib.timeout_add(3000, self._tick_status)
+        self._status_source = GLib.timeout_add(3000, self._tick_status)
         # If following the desktop, rebuild palette from the real GTK theme.
         if str(settings.get("theme", "system")) == "system":
             self._window._follow_desktop = True
@@ -663,12 +697,11 @@ class MonitorApp(Gtk.Application):
             from gi.repository import Gtk as _Gtk
             gtk_settings = _Gtk.Settings.get_default()
             if self._window:
-                gtk_settings.connect(
-                    "notify::gtk-theme-name",
-                    self._window._on_gtk_settings_change)
-                gtk_settings.connect(
-                    "notify::gtk-application-prefer-dark-theme",
-                    self._window._on_gtk_settings_change)
+                for signal in ("notify::gtk-theme-name",
+                               "notify::gtk-application-prefer-dark-theme"):
+                    handler = gtk_settings.connect(
+                        signal, self._window._on_gtk_settings_change)
+                    self._settings_handlers.append((gtk_settings, handler))
         except Exception:
             pass
 
@@ -684,11 +717,17 @@ class MonitorApp(Gtk.Application):
             self._window.show_tab_only()
             self._window.grab_focus()
 
-    def do_quit(self) -> None:  # type: ignore[override]
+    def do_shutdown(self) -> None:  # type: ignore[override]
         """Clean shutdown."""
         if self._window:
             self._window._stop_event.set()
-        Gtk.Application.do_quit(self)
+        if self._status_source:
+            GLib.source_remove(self._status_source)
+            self._status_source = 0
+        for settings, handler in self._settings_handlers:
+            settings.disconnect(handler)
+        self._settings_handlers.clear()
+        Gtk.Application.do_shutdown(self)
 
 
 def _display_problem() -> str:
@@ -721,11 +760,4 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     sampler_obj = Sampler()
     app = MonitorApp(sampler=sampler_obj.sample)
-    app.run(args)
-    if app.window is None:
-        return 1
-    # This GTK build never calls do_main, so drive the loop here; it returns
-    # when the window closes.
-    Gtk.main()
-    app.quit()
-    return 0
+    return app.run(["spaced-monitor", *args])

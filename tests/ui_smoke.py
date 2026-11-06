@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -15,6 +16,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib
 
 from spaced_monitor import theme as theme_mod
+from spaced_monitor import format as fmt
 from spaced_monitor.collect import (
     Snapshot, CpuInfo, MemInfo, GpuInfo, DiskInfo, NetInfo, Fan,
     Temperature, Filesystem, Interface, GpuExtra,
@@ -295,6 +297,32 @@ def _tab_switch_check() -> None:
     print("OK: MonitorWindow switches tabs, focuses cards and updates all pages")
 
 
+def _missing_gpu_check() -> None:
+    """Unsupported/disappearing GPUs must not freeze later hardware cards."""
+    snap = _mock_snapshot()
+    missing = replace(snap, gpu=None, gpu_extra=None)
+    for pal in (theme_mod.DARK, theme_mod.LIGHT):
+        page = HardwarePage(pal)
+        gpu, memory, storage, network = page._cards[2:]
+        for sample in (missing, snap, missing, snap):
+            page.update(sample)
+            assert memory._big.get_label() == fmt.pair_gb(
+                sample.memory.total - sample.memory.available, sample.memory.total)
+            assert storage._read.get_label() == f"read {fmt.rate(sample.disk.read_bps)}"
+            assert network._rates[0].get_label() == f"down {fmt.rate(sample.net.rx_bps)}"
+            if sample.gpu is None:
+                assert gpu._model.get_label() == "GPU information unavailable"
+                assert gpu._gauge._percent == 0
+                assert gpu._load.get_label() == fmt.EMDASH
+                assert all(line.get_label() == "" for line in gpu._lines)
+            else:
+                assert gpu._model.get_label() == sample.gpu.name
+                assert gpu._gauge._percent == sample.gpu.percent
+                assert gpu._load.get_label() == fmt.percent(sample.gpu.percent)
+        page.destroy()
+    print("OK: missing/reappearing GPU does not interrupt hardware updates")
+
+
 def main() -> int:
     """Run the smoke test."""
     paths = run_screenshots()
@@ -303,6 +331,7 @@ def main() -> int:
     for p in paths:
         print(f"OK: {p} ({os.path.getsize(p)} bytes)")
     _tab_switch_check()
+    _missing_gpu_check()
     return 0
 
 
