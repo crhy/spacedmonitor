@@ -157,7 +157,7 @@ class TemperatureTests(unittest.TestCase):
         self.assertEqual(rows[0][1], "core")
         self.assertEqual(rows[0][3], "temp-cool")
         self.assertEqual(rows[1][3], "temp-hot")
-        self.assertIn("86", rows[1][2])
+        self.assertEqual(rows[1][2], "187 °F")
 
     def test_sensor_rows_empty(self):
         """No sensors (no sensors.yaml) is not an error."""

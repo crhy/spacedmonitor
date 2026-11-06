@@ -12,7 +12,7 @@ from typing import Callable, Optional
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, Gdk, GLib
 
 from spaced_monitor import theme as theme_mod
 from spaced_monitor import format as fmt
@@ -149,7 +149,12 @@ class MonitorWindow(Gtk.Window):
         self._user_dragged = False
         self._pane_fracs = default_fractions()
         self._follow_desktop = True
+        self._focused_card = None
+        self._focus_hidden: list = []
+        self._focus_expand: tuple[bool, bool] | None = None
         self._build_ui()
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        self.connect("button-press-event", self._on_card_click)
         self.connect("destroy", self._on_close)
 
     def _build_ui(self) -> None:
@@ -167,7 +172,62 @@ class MonitorWindow(Gtk.Window):
         root.pack_start(self._build_footer(), expand=False, fill=True, padding=0)
         self._tab = "overview"
         self._show_tab()
+        self._root = root
         self.add(root)
+
+    @staticmethod
+    def _nearest_card(widget):
+        """Return the closest ancestor carrying the shared card CSS class."""
+        while widget is not None:
+            if widget.get_style_context().has_class("card"):
+                return widget
+            widget = widget.get_parent()
+        return None
+
+    def _on_card_click(self, _window, event) -> bool:
+        """Double-click a card to focus it; the next click restores the page."""
+        if event.button != Gdk.BUTTON_PRIMARY:
+            return False
+        if self._focused_card is not None:
+            self._restore_focused_card()
+            return False
+        if event.type != Gdk.EventType._2BUTTON_PRESS:
+            return False
+        card = self._nearest_card(Gtk.get_event_widget(event))
+        if card is not None:
+            self._focus_card(card)
+        return False
+
+    def _focus_card(self, card) -> None:
+        """Hide siblings along a card's container path so it fills the page."""
+        hidden = []
+        current = card
+        parent = current.get_parent()
+        while parent is not None and parent is not self:
+            if isinstance(parent, Gtk.Container):
+                for child in parent.get_children():
+                    if child is not current and child.get_visible():
+                        child.hide()
+                        hidden.append(child)
+            current = parent
+            parent = current.get_parent()
+        self._focus_hidden = hidden
+        self._focus_expand = (card.get_hexpand(), card.get_vexpand())
+        self._focused_card = card
+        card.set_hexpand(True)
+        card.set_vexpand(True)
+
+    def _restore_focused_card(self) -> None:
+        """Restore widgets hidden by card focus without exposing other tabs."""
+        card = self._focused_card
+        if card is not None and self._focus_expand is not None:
+            card.set_hexpand(self._focus_expand[0])
+            card.set_vexpand(self._focus_expand[1])
+        for widget in reversed(self._focus_hidden):
+            widget.show()
+        self._focused_card = None
+        self._focus_hidden = []
+        self._focus_expand = None
 
     def _build_topbar(self) -> Gtk.Box:
         """Top bar: title, tabs, status, theme button."""

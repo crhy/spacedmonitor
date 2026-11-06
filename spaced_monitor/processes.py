@@ -49,6 +49,7 @@ _NAME_MAP = {
     "claude": "Claude Code",
     "pi": "pi (coding agent)",
     "strata": "Strata",
+    "spaced_monitor": "Spaced Monitor",
 }
 
 _GENERIC_INTERPRETERS = frozenset(("python3", "python", "node", "java", "bash",
@@ -127,6 +128,8 @@ def _name_from_cmdline(cmdline: list) -> str:
         base = os.path.basename(arg)
         stem = os.path.splitext(base)[0]
         if stem and not stem.startswith("-") and not _is_version(stem):
+            if stem in _NAME_MAP:
+                return _NAME_MAP[stem]
             return stem[0].upper() + stem[1:]
     return ""
 

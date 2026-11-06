@@ -42,11 +42,18 @@ def rate(bps: Optional[float]) -> str:
     return f"{v:.0f} {units[i]}/s"
 
 
+def fahrenheit(c: Optional[float]) -> Optional[float]:
+    """Convert a Celsius reading to Fahrenheit, preserving missing values."""
+    if c is None:
+        return None
+    return (c * 9.0 / 5.0) + 32.0
+
+
 def temp(c: Optional[float]) -> str:
-    """Format a temperature in Celsius, e.g. '62 °C'."""
+    """Format a Celsius reading for display in Fahrenheit, e.g. '144 °F'."""
     if c is None:
         return EMDASH
-    return f"{int(round(c))} °C"
+    return f"{int(round(fahrenheit(c)))} °F"
 
 
 def ghz(mhz: Optional[float]) -> str:
