@@ -28,6 +28,9 @@ if [ -f tests/ui_live.py ]; then
     echo "OK: Live UI test (real samplers, real window)"
 fi
 
+timeout 60 xvfb-run -a python3 tests/ui_lifecycle.py
+echo "OK: application lifecycle (no invisible process after close)"
+
 if [ -f tests/ui_themes.py ]; then
     timeout 600 python3 tests/ui_themes.py
     echo "OK: UI theme tests (screenshots in build/screenshots/)"

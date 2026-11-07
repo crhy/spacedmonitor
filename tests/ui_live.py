@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import os
 import sys
+import ctypes
+from ctypes.util import find_library
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,7 +38,7 @@ def _pump(seconds: float) -> None:
     def _quit():
         Gtk.main_quit()
         return False
-    GLib.timeout_add_seconds(int(seconds), _quit)
+    GLib.timeout_add(max(1, int(seconds * 1000)), _quit)
     Gtk.main()
 
 
@@ -59,12 +62,110 @@ def _capture_window(win: Gtk.Window, path: str) -> bool:
     return os.path.exists(path) and os.path.getsize(path) > 1024
 
 
-def _inside(alloc, container_alloc) -> bool:
-    """True if alloc is fully inside container_alloc."""
-    return (alloc.x >= container_alloc.x and
-            alloc.y >= container_alloc.y and
-            alloc.x + alloc.width <= container_alloc.x + container_alloc.width and
-            alloc.y + alloc.height <= container_alloc.y + container_alloc.height)
+def _inside_widget(widget: Gtk.Widget, ancestor: Gtk.Widget) -> bool:
+    """Compare real coordinates, not allocations relative to different parents."""
+    xy = widget.translate_coordinates(ancestor, 0, 0)
+    if xy is None:
+        return False
+    x, y = xy
+    return (x >= 0 and y >= 0 and
+            x + widget.get_allocated_width() <= ancestor.get_allocated_width() and
+            y + widget.get_allocated_height() <= ancestor.get_allocated_height())
+
+
+def _drag_horizontal_handle(paned: Gtk.Paned, fraction: float) -> None:
+    """Exercise a real X11 pointer drag, not the save callback in isolation."""
+    x11 = ctypes.CDLL(find_library("X11"))
+    xtst = ctypes.CDLL(find_library("Xtst"))
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XFlush.argtypes = [ctypes.c_void_p]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    xtst.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+    xtst.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint,
+                                        ctypes.c_int, ctypes.c_ulong]
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise RuntimeError("The live UI drag regression requires an X11 display")
+    handle = paned.get_handle_window()
+    _, x, y = handle.get_origin()
+    x += max(1, handle.get_width() // 2)
+    y += max(1, handle.get_height() // 2)
+    delta = int(paned.get_allocated_width() * fraction) - paned.get_position()
+    try:
+        xtst.XTestFakeMotionEvent(display, -1, x, y, 0)
+        xtst.XTestFakeButtonEvent(display, 1, True, 0)
+        x11.XFlush(display)
+        _pump(.05)
+        xtst.XTestFakeMotionEvent(display, -1, x + delta, y, 0)
+        x11.XFlush(display)
+        _pump(.05)
+        xtst.XTestFakeButtonEvent(display, 1, False, 0)
+        x11.XFlush(display)
+        _pump(.05)
+    finally:
+        xtst.XTestFakeButtonEvent(display, 1, False, 0)
+        x11.XCloseDisplay(display)
+
+
+def _check_overview_reachable(win: MonitorWindow, size: str, errors: list) -> None:
+    """Every card stays intact and its controls can be scrolled into view."""
+    scroll = win._overview
+    viewport = scroll.get_child()
+    content = win._paned_outer
+    adjustment = scroll.get_vadjustment()
+    cards = (win._cpu_card, win._gpu_card, win._mem_card, win._gmem_card,
+             win._temp_card, win._disk_card, win._net_card)
+    targets = []
+    for card in cards:
+        minimum = card.get_preferred_height_for_width(card.get_allocated_width())[0]
+        if card.get_allocated_height() < minimum:
+            errors.append(f"FAIL: {size} {type(card).__name__} height "
+                          f"{card.get_allocated_height()} < minimum {minimum}")
+        for lbl in _walk_labels(card):
+            if not _inside_widget(lbl, card):
+                errors.append(f"FAIL: {size} {type(card).__name__} clips "
+                              f"label {lbl.get_text()!r}")
+            if lbl.get_allocated_height() < lbl.get_preferred_height_for_width(
+                    lbl.get_allocated_width())[0]:
+                errors.append(f"FAIL: {size} label height clips {lbl.get_text()!r}")
+            targets.append(lbl)
+    targets.extend((win._temp_card._graph, win._disk_card._spark,
+                    win._net_card._spark, win._app_table._search,
+                    *win._app_table._header_btns.values()))
+    win._app_table._scrolled.get_vadjustment().set_value(0)
+    if win._app_table._rows:
+        targets.extend(win._app_table._rows[0]["widgets"])
+    for target in targets:
+        if not target.get_visible():
+            continue
+        xy = target.translate_coordinates(content, 0, 0)
+        if xy is None:
+            errors.append(f"FAIL: {size} unreachable {type(target).__name__}")
+            continue
+        adjustment.set_value(max(0, min(xy[1], adjustment.get_upper()
+                                       - adjustment.get_page_size())))
+        _pump(0.02)
+        # Check every clipping ancestor, including the table's inner scroll
+        # area: a nonzero allocation alone never proved anything was visible.
+        ancestor = target.get_parent()
+        while ancestor is not None:
+            if not _inside_widget(target, ancestor):
+                errors.append(f"FAIL: {size} {type(target).__name__} remains "
+                              f"clipped by {type(ancestor).__name__} after scroll")
+                break
+            if ancestor is viewport:
+                break
+            ancestor = ancestor.get_parent()
+    if size == "620x420":
+        if adjustment.get_upper() <= adjustment.get_page_size():
+            errors.append("FAIL: 620x420 overview has no vertical scroll range")
+        _capture_window(win, str(SCREENSHOT_DIR / "live-overview-620x420-bottom.png"))
+    if _has_horizontal_scrollbar(scroll):
+        errors.append(f"FAIL: {size} overview scrolls horizontally")
+    adjustment.set_value(0)
+    _pump(0.05)
 
 
 def _find_scrolled_window(widget: Gtk.Widget) -> Gtk.ScrolledWindow | None:
@@ -174,6 +275,10 @@ def main() -> int:
         win.resize(w, h)
         _pump(2.0)
 
+        if tuple(win.get_size()) != (w, h):
+            errors.append(f"FAIL: requested {w}x{h}, actual {tuple(win.get_size())}")
+        _check_overview_reachable(win, f"{w}x{h}", errors)
+
         path = str(SCREENSHOT_DIR / f"live-overview-{w}x{h}.png")
         if not _capture_window(win, path):
             errors.append(f"FAIL: live-overview-{w}x{h}.png not captured")
@@ -182,7 +287,7 @@ def main() -> int:
 
         win_alloc = win.get_allocation()
 
-        # (a) Each of the 4 gauge cards has allocation fully inside window
+        # (a) Each of the 4 gauge cards has allocation fully inside content
         #     with width > 60 and height > 60.
         cards = (win._cpu_card, win._gpu_card, win._mem_card, win._gmem_card)
         for card in cards:
@@ -193,7 +298,7 @@ def main() -> int:
             if ca.height <= 60:
                 errors.append(
                     f"FAIL: {w}x{h} card height {ca.height} <= 60")
-            if not _inside(ca, win_alloc):
+            if not _inside_widget(card, win._paned_outer):
                 errors.append(
                     f"FAIL: {w}x{h} card not inside window "
                     f"({ca.x},{ca.y} {ca.width}x{ca.height} "
@@ -212,7 +317,7 @@ def main() -> int:
             if la.height < 1:
                 errors.append(
                     f"FAIL: {w}x{h} title label height {la.height} < 1")
-            if not _inside(la, card.get_allocation()):
+            if not _inside_widget(lbl, card):
                 errors.append(
                     f"FAIL: {w}x{h} title label not inside card")
 
@@ -301,7 +406,7 @@ def main() -> int:
                         f"{lbl.get_text()!r}")
 
         # (c) CPU, RAM, GPU, Disk header labels of the process list are
-        #     all allocated and fully inside the window.
+        #     all allocated (reachability through scrolling is checked above).
         headers = _find_col_headers(win._app_table)
         for col_name in ("CPU", "RAM", "GPU", "Disk"):
             btn = headers.get(col_name)
@@ -313,9 +418,6 @@ def main() -> int:
             if ba.height < 1:
                 errors.append(
                     f"FAIL: {w}x{h} col header '{col_name}' height {ba.height} < 1")
-            if not _inside(ba, win_alloc):
-                errors.append(
-                    f"FAIL: {w}x{h} col header '{col_name}' not inside window")
 
         # (d) The list's horizontal scrollbar is not visible.
         sw = _find_scrolled_window(win._app_table)
@@ -389,6 +491,25 @@ def main() -> int:
                 errors.append(
                     f"FAIL: overview card title {lbl.get_text()!r} "
                     f"cannot wrap, so it truncates when the card is narrow")
+
+    # A user-adjusted divider must not disable later responsive stacking.
+    win._on_tab(None, "overview")
+    _pump(.1)
+    with patch.object(theme_mod, "load_settings", return_value={}), \
+            patch.object(theme_mod, "save_settings") as save:
+        _drag_horizontal_handle(win._paned_mid_h, .6)
+        # Resize immediately, before the old delayed-save deadline.
+        win.resize(620, 420)
+        _pump(.1)
+        if not save.called or abs(win._pane_fracs["pane_mid_h"] - .6) > .01:
+            errors.append("FAIL: dragging divider does not retain its fraction")
+    for w, h in ((620, 420), (1400, 900)):
+        win.resize(w, h)
+        _pump(1)
+        want = Gtk.Orientation.VERTICAL if w == 620 else Gtk.Orientation.HORIZONTAL
+        if win._paned_mid_h.get_orientation() != want:
+            errors.append(f"FAIL: {w}x{h} divider drag disabled responsive stacking")
+        _check_overview_reachable(win, f"{w}x{h} after drag", errors)
 
     # Stop the worker.
     win._stop_event.set()

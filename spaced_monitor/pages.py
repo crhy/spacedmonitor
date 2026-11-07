@@ -576,6 +576,13 @@ class _GpuCard(_HCard):
     def update(self, snap) -> None:
         """Refresh GPU load, temperature, power, memory and the link line."""
         gpu = snap.gpu
+        if gpu is None:
+            self.set_model("GPU information unavailable")
+            self._gauge.set_percent(None)
+            self._load.set_label(fmt.EMDASH)
+            for line in self._lines:
+                line.set_label("")
+            return
         self.set_model(gpu.name or "")
         self._gauge.set_percent(gpu.percent)
         self._load.set_label(fmt.percent(gpu.percent))
