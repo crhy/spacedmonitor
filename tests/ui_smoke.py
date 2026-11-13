@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+from types import SimpleNamespace
 from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, Gdk, GLib
 
 from spaced_monitor import theme as theme_mod
 from spaced_monitor import format as fmt
@@ -72,7 +73,7 @@ def _mock_snapshot() -> Snapshot:
 
 def _mock_apps(count: int = 40) -> list:
     """Return `count` mock apps, each with three child processes."""
-    names = ["brave", "strata", "python3", "firefox", "steam", "code",
+    names = ["mate-panel", "strata", "python3", "firefox", "steam", "code",
              "gimp", "inkscape", "obs", "postgres", "nginx", "mpv"]
     apps = []
     for i in range(count):
@@ -156,6 +157,8 @@ def _build_overview(pal, snap: Snapshot) -> Gtk.Box:
     root.pack_start(graphs, True, True, 0)
     # App table
     apps = [
+        AppUsage("mate-panel", [5], 1.0, int(0.1 * 1024**3), 0.0, 0,
+                 0.0, "rhy", "mate-panel", []),
         AppUsage("brave", [10, 11], 12.0, int(1.4 * 1024**3), 0.0, 0,
                  940 * 1024, "rhy", "brave"),
         AppUsage("strata", [20], 33.0, int(2.1 * 1024**3), 67.0,
@@ -287,12 +290,20 @@ def _tab_switch_check() -> None:
     assert win._temp_card.get_visible()
     assert not win._paned_outer.get_child1().get_visible()
     assert not win._paned_mid_h.get_child2().get_visible()
-    win._restore_focused_card()
+    single = SimpleNamespace(button=Gdk.BUTTON_PRIMARY,
+                             type=Gdk.EventType.BUTTON_PRESS)
+    win._on_card_click(win, single)
+    assert win._focused_card is win._temp_card
+    double = SimpleNamespace(button=Gdk.BUTTON_PRIMARY,
+                             type=Gdk.EventType._2BUTTON_PRESS)
+    win._on_card_click(win, double)
     assert win._focused_card is None
     assert win._paned_outer.get_child1().get_visible()
     assert win._paned_mid_h.get_child2().get_visible()
+    assert win._about_btn.get_tooltip_text() == "About Spaced Monitor"
     win._on_tab(None, "hardware")
     win._apply_snapshot(snap)
+    assert win._hardware_page._flow.get_max_children_per_line() == 3
     win.close()
     print("OK: MonitorWindow switches tabs, focuses cards and updates all pages")
 

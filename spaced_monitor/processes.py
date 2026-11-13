@@ -54,10 +54,13 @@ _NAME_MAP = {
 
 _GENERIC_INTERPRETERS = frozenset(("python3", "python", "node", "java", "bash",
                                    "sh", "perl", "ruby"))
-# Ending one of these ends the desktop session (or the display), not an app.
-_SESSION_CRITICAL = frozenset((
+# Ending one of these breaks the desktop session or a core service that the
+# running session depends on.  Keep optional daemons out of this list: red is
+# reserved for processes whose loss can make the system or session unusable.
+_ESSENTIAL_PROCESSES = frozenset((
     "Xorg", "Xwayland", "X", "mate-session", "marco", "compiz", "mate-panel",
-    "lightdm", "slim", "elogind", "elogind-daemon", "dbus-daemon", "login"))
+    "lightdm", "slim", "elogind", "elogind-daemon", "dbus-daemon", "login",
+    "NetworkManager", "wpa_supplicant", "eudevd", "udevd", "polkitd"))
 _SKIP_DIRS = frozenset(("versions", "bin", "lib", ".local", "share", ""))
 
 
@@ -176,6 +179,17 @@ _ICON_DIRS = (
     os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
 )
 _icon_cache: dict[str, str] = {}
+
+
+def is_essential(app: AppUsage) -> bool:
+    """True when ending this process group would break the system or session.
+
+    Keep this classification beside the termination guard so the red X shown
+    by both process tables cannot drift away from the processes we protect.
+    The monitor's own PID is also refused at runtime, but is deliberately not
+    labelled as an essential *system* process.
+    """
+    return any(pid in (1, 2) for pid in app.pids) or app.name in _ESSENTIAL_PROCESSES
 
 
 def _read_desktop(path: str) -> dict:
@@ -518,8 +532,9 @@ def _refusal(app: AppUsage, me: int, uid: int) -> Optional[str]:
     for pid in app.pids:
         if pid in (1, 2) or pid == me:
             return f"refusing to end {name}: protected process {pid}"
-    if app.name in _SESSION_CRITICAL:
-        return f"{name} runs your desktop session: ending it would log you out."
+    if is_essential(app):
+        return (f"{name} is essential to the system or desktop session: "
+                "ending it could make the session unusable.")
     try:
         owner = pwd.getpwuid(uid).pw_name
     except KeyError:

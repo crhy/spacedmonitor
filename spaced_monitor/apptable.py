@@ -10,7 +10,7 @@ from gi.repository import Gtk, GLib
 from spaced_monitor import format as fmt
 from spaced_monitor.pages import sort_apps, sort_indicator, meter_fraction
 from spaced_monitor.processes import (AppUsage, display_name, filter_apps,
-                                      end_immediate)
+                                      end_immediate, is_essential)
 from spaced_monitor.widgets import ELLIPSIZE_END, Meter
 
 _COLUMNS = ("cpu", "ram", "gpu", "disk")
@@ -92,6 +92,13 @@ class AppTable(Gtk.Box):
         """Build the column-header buttons and a scrollable grid for rows."""
         self._vbox = _vbox(spacing=6)
         self._vbox.pack_start(self._head, expand=False, fill=False, padding=0)
+        legend = Gtk.Label(
+            label="Red ✕: essential and protected  ·  Orange ✕: other process")
+        legend.get_style_context().add_class("muted")
+        legend.set_xalign(0.0)
+        legend.set_tooltip_text(
+            "Spaced Monitor refuses to end essential system and desktop-session processes.")
+        self._vbox.pack_start(legend, expand=False, fill=False, padding=0)
         self._scrolled = Gtk.ScrolledWindow()
         self._scrolled.set_policy(Gtk.PolicyType.NEVER,
                                   Gtk.PolicyType.AUTOMATIC)
@@ -186,10 +193,22 @@ class AppTable(Gtk.Box):
         for widget in widgets:
             widget.show()
         return {"widgets": widgets, "icon": icon, "icon_name": "", "name": name,
-                "labels": labels, "meters": meters}
+                "labels": labels, "meters": meters, "end_button": btn,
+                "essential": None}
 
     def _fill_row(self, row: dict, app: AppUsage) -> None:
         """Put one app's name, icon and values into an existing row."""
+        essential = is_essential(app)
+        if row["essential"] != essential:
+            context = row["end_button"].get_style_context()
+            if essential:
+                context.add_class("essential-end-button")
+                row["end_button"].set_tooltip_text(
+                    "Essential system process — protected from ending")
+            else:
+                context.remove_class("essential-end-button")
+                row["end_button"].set_tooltip_text("End this process")
+            row["essential"] = essential
         icon_name = app.icon or "application-x-executable"
         if icon_name != "application-x-executable" and \
                 not Gtk.IconTheme.get_default().has_icon(icon_name):

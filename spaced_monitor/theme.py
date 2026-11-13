@@ -337,7 +337,7 @@ combobox button {{
     padding: 4px 10px;
 }}
 .end-button {{
-    background-color: {red};
+    background-color: {warm};
     background-image: none;
     color: #ffffff;
     border-radius: 10px;
@@ -348,14 +348,14 @@ combobox button {{
 }}
 .end-button:hover, .end-button:active, .end-button:focus,
 .end-button:backdrop, .end-button:hover:active {{
-    background-color: #dc2626;
+    background-color: #ea580c;
     background-image: none;
     color: #ffffff;
     border: none;
 }}
 button.end-button, button.end-button:hover, button.end-button:active,
 button.end-button:focus, button.end-button:backdrop {{
-    background-color: {red};
+    background-color: {warm};
     background-image: none;
     color: #ffffff;
     border: none;
@@ -365,6 +365,28 @@ button.end-button:focus, button.end-button:backdrop {{
     padding: 2px;
 }}
 button.end-button:hover, button.end-button:active, button.end-button:focus {{
+    background-color: #ea580c;
+    background-image: none;
+    color: #ffffff;
+}}
+.end-button.essential-end-button,
+.end-button.essential-end-button:hover,
+.end-button.essential-end-button:active,
+.end-button.essential-end-button:focus,
+button.end-button.essential-end-button,
+button.end-button.essential-end-button:hover,
+button.end-button.essential-end-button:active,
+button.end-button.essential-end-button:focus {{
+    background-color: {red};
+    background-image: none;
+    color: #ffffff;
+}}
+.end-button.essential-end-button:hover,
+.end-button.essential-end-button:active,
+.end-button.essential-end-button:focus,
+button.end-button.essential-end-button:hover,
+button.end-button.essential-end-button:active,
+button.end-button.essential-end-button:focus {{
     background-color: #dc2626;
     background-image: none;
     color: #ffffff;
