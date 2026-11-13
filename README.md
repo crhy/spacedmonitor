@@ -4,10 +4,11 @@ The system monitor for Spaced Linux: CPU, GPU, memory, temperatures, disks, netw
 the programs using them, in one window that is easy to read at a glance. Rich colours on
 the gauges, clear temperature graphs, dark and light themes.
 
-Current version: **0.1.8**. Published packages are on the
+Current version: **0.1.9**. Published packages are on the
 [releases page](https://github.com/crhy/spacedmonitor/releases).
-This version keeps hardware readings updating on systems without a supported GPU,
-including when GPU telemetry disappears and returns.
+This version adds an About dialog with the installed version, makes card focus and
+restore consistently use a double-click, and fits three compact cards across the
+Hardware page at the default window size.
 Further work is tracked in [crhy/spaced#385](https://github.com/crhy/spaced/issues/385).
 
 ![Overview mockup](docs/mockup-overview.png)
@@ -17,9 +18,10 @@ Further work is tracked in [crhy/spaced#385](https://github.com/crhy/spaced/issu
 - **Overview**: CPU, GPU, memory and GPU-memory gauges; a five-minute Fahrenheit CPU/GPU temperature
   graph; disk and network activity; "What is using your computer?" with per-program CPU,
   RAM, GPU and disk use, and a button to end a program; fans, CPU/GPU power and uptime.
-- **Processes**: the full process list, searchable and sortable.
+- **Processes**: the full process list, searchable and sortable. Red X buttons
+  identify essential protected processes; ordinary processes use an orange X.
 - **Hardware**: per-core, per-sensor and per-device detail.
-- **Focus**: double-click any card to make it fill the window; click again to restore.
+- **Focus**: double-click any card to make it fill the window; double-click again to restore.
 
 Native Debian package (Python, GTK 3), published on each GitHub release; the Spaced Linux
 APT repository also distributes the package. No systemd. GPL-3.0-or-later.
@@ -29,8 +31,8 @@ APT repository also distributes the package. No systemd. GPL-3.0-or-later.
 Download the prebuilt package from the latest release, then install it with apt:
 
 ```sh
-curl -LO https://github.com/crhy/spacedmonitor/releases/download/v0.1.8/spaced-monitor_0.1.8_all.deb
-sudo apt install ./spaced-monitor_0.1.8_all.deb
+curl -LO https://github.com/crhy/spacedmonitor/releases/download/v0.1.9/spaced-monitor_0.1.9_all.deb
+sudo apt install ./spaced-monitor_0.1.9_all.deb
 ```
 
 Or build it yourself (see Build below) and install that:

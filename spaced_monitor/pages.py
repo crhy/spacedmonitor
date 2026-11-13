@@ -11,7 +11,7 @@ from spaced_monitor import format as fmt
 from spaced_monitor import theme as theme_mod
 from spaced_monitor.collect import Filesystem, GpuExtra, Interface, Temperature
 from spaced_monitor.processes import (AppUsage, ProcUsage, display_name,
-                                      end_immediate, filter_apps)
+                                      end_immediate, filter_apps, is_essential)
 from spaced_monitor.widgets import (ELLIPSIZE_END, Gauge, Meter, StackedBar)
 
 # Columns the Processes page can sort by, in header order.
@@ -274,6 +274,10 @@ class ProcessesPage(Gtk.Box):
         self._scope_combo.connect("changed", self._on_scope)
         head.pack_start(self._scope_combo, False, False, 0)
         vbox.pack_start(head, False, False, 0)
+        legend = _muted("Red ✕: essential and protected  ·  Orange ✕: other process")
+        legend.set_tooltip_text(
+            "Spaced Monitor refuses to end essential system and desktop-session processes.")
+        vbox.pack_start(legend, False, False, 0)
         self._header_btns: dict = {}
         self._scrolled = Gtk.ScrolledWindow()
         self._scrolled.set_policy(Gtk.PolicyType.AUTOMATIC,
@@ -334,6 +338,11 @@ class ProcessesPage(Gtk.Box):
     def _add_row(self, app: AppUsage, row: int) -> None:
         """Attach one app row: end, twist toggle, icon, name, value pairs."""
         end = _flat_button("\u2715", css="end-button")
+        if is_essential(app):
+            end.get_style_context().add_class("essential-end-button")
+            end.set_tooltip_text("Essential system process — protected from ending")
+        else:
+            end.set_tooltip_text("End this process")
         end.connect("clicked", self._on_end, app)
         self._grid.attach(end, 0, row, 1, 1)
         key = (app.name, app.user)
@@ -738,9 +747,12 @@ class HardwarePage(Gtk.Box):
     def _build(self) -> None:
         """Wrap the FlowBox of cards in the page frame."""
         self._flow = Gtk.FlowBox()
-        self._flow.set_selection_mode(False)
-        self._flow.set_max_children_per_line(2)
+        self._flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._flow.set_min_children_per_line(1)
+        self._flow.set_max_children_per_line(3)
         self._flow.set_homogeneous(True)
+        self._flow.set_column_spacing(8)
+        self._flow.set_row_spacing(8)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.add(self._flow)
@@ -757,7 +769,5 @@ class HardwarePage(Gtk.Box):
             _NetworkCard(self._pal),
         ]
         for card in self._cards:
-            card.set_margin_end(12)
-            card.set_margin_bottom(12)
             self._flow.add(card)
         self._flow.show_all()

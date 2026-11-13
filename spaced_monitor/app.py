@@ -14,6 +14,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 
+from spaced_monitor import __version__
 from spaced_monitor import theme as theme_mod
 from spaced_monitor import format as fmt
 from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
@@ -184,13 +185,13 @@ class MonitorWindow(Gtk.Window):
         return None
 
     def _on_card_click(self, _window, event) -> bool:
-        """Double-click a card to focus it; the next click restores the page."""
+        """Double-click a card to focus it; double-click again to restore."""
         if event.button != Gdk.BUTTON_PRIMARY:
+            return False
+        if event.type != Gdk.EventType._2BUTTON_PRESS:
             return False
         if self._focused_card is not None:
             self._restore_focused_card()
-            return False
-        if event.type != Gdk.EventType._2BUTTON_PRESS:
             return False
         card = self._nearest_card(Gtk.get_event_widget(event))
         if card is not None:
@@ -246,12 +247,32 @@ class MonitorWindow(Gtk.Window):
         bar.pack_start(tabs, expand=True, fill=False, padding=0)
         self._status_lbl = _muted("Updated just now")
         bar.pack_start(self._status_lbl, expand=False, fill=False, padding=0)
+        self._about_btn = Gtk.Button()
+        self._about_btn.set_size_request(28, 28)
+        self._about_btn.set_tooltip_text("About Spaced Monitor")
+        self._about_btn.connect("clicked", self._on_about)
+        self._about_btn.add(Gtk.Image.new_from_icon_name(
+            "help-about-symbolic", Gtk.IconSize.SMALL_TOOLBAR))
+        bar.pack_start(self._about_btn, expand=False, fill=False, padding=0)
         self._theme_btn = Gtk.Button()
         self._theme_btn.set_size_request(28, 28)
         self._theme_btn.connect("clicked", self._on_theme_toggle)
         self._update_theme_btn_icon()
         bar.pack_start(self._theme_btn, expand=False, fill=False, padding=0)
         return bar
+
+    def _on_about(self, _button) -> None:
+        """Show package identity and the installed version."""
+        dialog = Gtk.AboutDialog(transient_for=self, modal=True)
+        dialog.set_program_name("Spaced Monitor")
+        dialog.set_version(__version__)
+        dialog.set_comments("See what your computer is doing")
+        dialog.set_website("https://github.com/crhy/spacedmonitor")
+        dialog.set_website_label("Spaced Monitor on GitHub")
+        dialog.set_logo_icon_name("org.spacedlinux.Monitor")
+        dialog.set_license_type(Gtk.License.GPL_3_0)
+        dialog.run()
+        dialog.destroy()
 
     def _update_theme_btn_icon(self) -> None:
         """Set the theme button to a sun or moon icon for the current theme."""

@@ -130,6 +130,15 @@ class TestCss(unittest.TestCase):
         text = css(DARK)
         self.assertIn("#ef4444", text)
 
+    def test_ordinary_end_button_is_orange(self):
+        text = css(DARK)
+        self.assertIn(".end-button {\n    background-color: #f97316", text)
+
+    def test_essential_end_button_is_red(self):
+        text = css(DARK)
+        self.assertIn(".end-button.essential-end-button", text)
+        self.assertIn("background-color: #ef4444", text)
+
     def test_tab_selected_uses_gpu_tint(self):
         text = css(DARK)
         self.assertIn("rgba(14, 165, 233, 0.4)", text)

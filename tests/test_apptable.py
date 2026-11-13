@@ -7,7 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from spaced_monitor.apptable import meter_fraction
-from spaced_monitor.processes import AppUsage, end_immediate, _sigkill_survivors
+from spaced_monitor.processes import (AppUsage, end_immediate, is_essential,
+                                      _sigkill_survivors)
 
 
 def _app(name="brave", pids=(10, 11), user="rhy"):
@@ -73,6 +74,20 @@ class TestEndImmediate(unittest.TestCase):
         ok, msg = end_immediate(_app(pids=(2,)), kill=lambda p, s: None, uid=0)
         self.assertFalse(ok)
         self.assertIn("protected", msg)
+
+    def test_essential_marker_matches_protected_system_processes(self):
+        """The red X covers kernel, desktop-session and core-service guards."""
+        self.assertTrue(is_essential(_app(pids=(1,))))
+        self.assertTrue(is_essential(_app(name="Xorg", pids=(500,))))
+        self.assertTrue(is_essential(_app(name="mate-panel", pids=(501,))))
+        for name in ("NetworkManager", "wpa_supplicant", "eudevd", "polkitd"):
+            self.assertTrue(is_essential(_app(name=name, pids=(503,))), name)
+        self.assertFalse(is_essential(_app(name="brave", pids=(502,))))
+
+    def test_monitor_self_guard_is_not_labelled_essential(self):
+        """Self-protection is a runtime safety rule, not a system classification."""
+        self.assertFalse(is_essential(_app(name="spaced_monitor",
+                                           pids=(os.getpid(),))))
 
     def test_refuses_own_pid(self):
         """The caller's own pid is protected."""
@@ -153,7 +168,7 @@ class TestEndImmediate(unittest.TestCase):
             ok, msg = end_immediate(_app(name=name, pids=(500,)),
                                     kill=lambda p, s: calls.append(p), uid=0)
             self.assertFalse(ok, name)
-            self.assertIn("log you out", msg)
+            self.assertIn("session unusable", msg)
             self.assertEqual(calls, [], name)
 
     def test_start_time_of_a_real_process(self):
