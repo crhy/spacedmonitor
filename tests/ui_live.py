@@ -329,10 +329,8 @@ def main() -> int:
                 (win._gpu_card, [win._gpu_card._model_lbl,
                                  win._gpu_card._line1, win._gpu_card._line2]),
                 (win._mem_card, [win._mem_card._big_lbl,
-                                 win._mem_card._pct_lbl,
                                  win._mem_card._bar, win._mem_card._legend]),
                 (win._gmem_card, [win._gmem_card._big_lbl,
-                                  win._gmem_card._pct_lbl,
                                   win._gmem_card._bar,
                                   win._gmem_card._legend]),
             ]
@@ -358,11 +356,9 @@ def main() -> int:
                              win._gpu_card._line1, win._gpu_card._line2]),
             (win._mem_card, [win._mem_card._title_lbl,
                              win._mem_card._big_lbl,
-                             win._mem_card._pct_lbl,
                              win._mem_card._bar, win._mem_card._legend]),
             (win._gmem_card, [win._gmem_card._title_lbl,
                               win._gmem_card._big_lbl,
-                              win._gmem_card._pct_lbl,
                               win._gmem_card._bar,
                               win._gmem_card._legend]),
         ]

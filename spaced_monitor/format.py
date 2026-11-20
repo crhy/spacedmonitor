@@ -6,6 +6,15 @@ from __future__ import annotations
 from typing import Optional
 
 EMDASH = "\u2014"
+CELSIUS = False
+
+
+def temperature_unit():
+    return "°C" if CELSIUS else "°F"
+
+
+def temperature_value(c):
+    return c if CELSIUS else fahrenheit(c)
 
 
 def bytes_gb(n: Optional[int]) -> str:
@@ -50,10 +59,10 @@ def fahrenheit(c: Optional[float]) -> Optional[float]:
 
 
 def temp(c: Optional[float]) -> str:
-    """Format a Celsius reading for display in Fahrenheit, e.g. '144 °F'."""
+    """Format a Celsius reading in the selected display unit (Fahrenheit by default)."""
     if c is None:
         return EMDASH
-    return f"{int(round(fahrenheit(c)))} °F"
+    return f"{int(round(temperature_value(c)))} {temperature_unit()}"
 
 
 def ghz(mhz: Optional[float]) -> str:

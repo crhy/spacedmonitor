@@ -90,7 +90,7 @@ class AppTable(Gtk.Box):
 
     def _build_scroll_area(self) -> None:
         """Build the column-header buttons and a scrollable grid for rows."""
-        self._vbox = _vbox(spacing=6)
+        self._vbox = _vbox(spacing=2)
         self._vbox.pack_start(self._head, expand=False, fill=False, padding=0)
         legend = Gtk.Label(
             label="Red ✕: essential and protected  ·  Orange ✕: other process")

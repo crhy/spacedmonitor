@@ -60,13 +60,13 @@ class TestCpuTemp(unittest.TestCase):
         )
         assert cpu_temp(ps) == 61.0
 
-    def test_fallback_first(self):
+    def test_unknown_sensor_is_not_cpu(self):
         ps = types.SimpleNamespace(
             sensors_temperatures=lambda: {
                 "mystery": [self._reading("x", 33.0)]
             }
         )
-        assert cpu_temp(ps) == 33.0
+        assert cpu_temp(ps) is None
 
     def test_none_when_empty(self):
         ps = types.SimpleNamespace(sensors_temperatures=lambda: {})
@@ -88,8 +88,9 @@ class TestFans(unittest.TestCase):
             }
         )
         result = fans(ps)
-        assert len(result) == 1
+        assert len(result) == 2
         assert result[0] == Fan(label="cpu fan1", rpm=1200)
+        assert result[1] == Fan(label="cpu fan2", rpm=0)
 
     def test_missing_sensors_fans(self):
         ps = types.SimpleNamespace()

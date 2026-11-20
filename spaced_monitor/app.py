@@ -7,12 +7,13 @@ import os
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime
 from typing import Callable, Optional
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Pango
 
 from spaced_monitor import __version__
 from spaced_monitor import theme as theme_mod
@@ -21,7 +22,11 @@ from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
                                   TemperatureCard, DiskCard, NetworkCard)
 from spaced_monitor.apptable import AppTable
 from spaced_monitor.widgets import ELLIPSIZE_END
-from spaced_monitor.pages import HardwarePage, ProcessesPage
+from spaced_monitor.pages import ProcessesPage
+from spaced_monitor.device_views import HardwarePage, DetailPage, Rows
+from spaced_monitor.suggestions import Suggestions
+from spaced_monitor import preferences
+from spaced_monitor.devices import History, gpu_devices
 from spaced_monitor.collect import Sampler, Snapshot
 from spaced_monitor.panes import (load_pane_fractions, save_pane_fractions,
                                    default_fractions)
@@ -137,7 +142,8 @@ class MonitorWindow(Gtk.Window):
     def __init__(self, sampler: Callable[[], Snapshot], refresh_ms: int = 1000,
                  pal=None, proc_sampler: Callable[[], list] | None = None) -> None:
         super().__init__(title="Spaced Monitor")
-        self.set_default_size(1400, 900)
+        fmt.CELSIUS = preferences.load_celsius()
+        self.set_default_size(850, 620)
         self._pal = pal or theme_mod.palette("dark")
         self._sampler = sampler
         self._refresh_ms = refresh_ms
@@ -152,9 +158,15 @@ class MonitorWindow(Gtk.Window):
         self._focused_card = None
         self._focus_hidden: list = []
         self._focus_expand: tuple[bool, bool] | None = None
+        self._detail_key = None
+        self._detail_origin = None
+        self._history = History()
+        self._suggestions = Suggestions()
+        self._extra_gpu_cards = {}
         self._build_ui()
         self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.connect("button-press-event", self._on_card_click)
+        self.connect("key-press-event", self._on_key)
         self.connect("destroy", self._on_close)
 
     def _build_ui(self) -> None:
@@ -163,12 +175,19 @@ class MonitorWindow(Gtk.Window):
         root.pack_start(self._build_topbar(), expand=False, fill=True, padding=0)
         self._overview = self._build_overview()
         self._processes_page = ProcessesPage(self._pal)
-        self._hardware_page = HardwarePage(self._pal)
+        self._hardware_page = HardwarePage(self._pal, self._open_details)
+        self._suggest_rows = Rows()
+        self._suggest_rows.set_border_width(16)
+        self._suggest_page = Gtk.ScrolledWindow()
+        self._suggest_page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._suggest_page.add(self._suggest_rows)
         self._pages = {"overview": self._overview,
                        "processes": self._processes_page,
-                       "hardware": self._hardware_page}
+                       "hardware": self._hardware_page, "suggest": self._suggest_page}
         for page in self._pages.values():
             root.pack_start(page, expand=True, fill=True, padding=0)
+        self._details = DetailPage(self._pal, self._close_details, self._history)
+        root.pack_start(self._details, True, True, 0)
         root.pack_start(self._build_footer(), expand=False, fill=True, padding=0)
         self._tab = "overview"
         self._show_tab()
@@ -193,13 +212,76 @@ class MonitorWindow(Gtk.Window):
         if self._focused_card is not None:
             self._restore_focused_card()
             return False
-        card = self._nearest_card(Gtk.get_event_widget(event))
+        widget = Gtk.get_event_widget(event)
+        probe = widget
+        while probe is not None and probe is not self:
+            if isinstance(probe, (Gtk.Button, Gtk.Entry, Gtk.Expander, Gtk.TreeView)):
+                return False
+            if isinstance(probe, Gtk.Label) and probe.get_selectable():
+                return False
+            probe = probe.get_parent()
+        if self._detail_key is not None:
+            self._close_details()
+            return True
+        if self._focused_card is not None:
+            self._restore_focused_card()
+            return False
+        card = self._nearest_card(widget)
         if card is not None:
-            self._focus_card(card)
+            key = getattr(card, "_detail_key", None)
+            if key:
+                self._open_details(key, card)
+            else:
+                self._focus_card(card)
         return False
+
+    def _on_key(self, _window, event):
+        if event.keyval == Gdk.KEY_Escape:
+            if self._detail_key is not None:
+                self._close_details()
+                return True
+            if self._focused_card is not None:
+                self._restore_focused_card()
+                return True
+        return False
+
+    def _open_details(self, key, origin=None):
+        if key in ("gpu:first", "vram:first"):
+            devices = gpu_devices(self._snapshot) if self._snapshot else []
+            key = key.split(":")[0] + ":" + (devices[0].device_id if devices else "unavailable")
+        self._detail_origin = origin or self.get_focus()
+        self._detail_key = key
+        self._details.key = key
+        self._details.show_all()
+        if self._snapshot:
+            self._details.update(self._snapshot)
+        self._show_tab()
+        self._details.back.grab_focus()
+
+    def _close_details(self):
+        self._detail_key = None
+        self._show_tab()
+        self._refresh_visible_page()
+        if self._detail_origin:
+            self._detail_origin.grab_focus()
+
+    def _attach_details(self, card, key):
+        card._detail_key = key
+        button = Gtk.Button(label="More")
+        button.set_halign(Gtk.Align.END)
+        button.set_tooltip_text("Open all device details; double-click the card also works")
+        button.connect("clicked", lambda _b: self._open_details(card._detail_key, button))
+        # Gauge cards are horizontal; put the action below their text, not
+        # beside the gauge where it would inflate the minimum window width.
+        children = card.get_children()
+        target = children[-1] if card.get_orientation() == Gtk.Orientation.HORIZONTAL and children and isinstance(children[-1], Gtk.Box) else card
+        target.pack_end(button, False, False, 0)
 
     def _focus_card(self, card) -> None:
         """Hide siblings along a card's container path so it fills the page."""
+        if self._focused_card is card:
+            self._restore_focused_card()
+            return
         hidden = []
         current = card
         parent = current.get_parent()
@@ -231,22 +313,23 @@ class MonitorWindow(Gtk.Window):
 
     def _build_topbar(self) -> Gtk.Box:
         """Top bar: title, tabs, status, theme button."""
-        bar = _hbox(spacing=12)
+        bar = _hbox(spacing=4)
         bar.get_style_context().add_class("topbar")
         name = Gtk.Label(label="Spaced Monitor")
         name.get_style_context().add_class("card-title")
         bar.pack_start(name, expand=False, fill=False, padding=0)
         tabs = _hbox(spacing=4)
         self._tab_btns: dict = {}
-        for tab_name in ("Overview", "Processes", "Hardware"):
+        for tab_name in ("Overview", "Processes", "Hardware", "Suggest"):
             btn = Gtk.Button(label=tab_name)
-            btn.set_size_request(80, 28)
+            btn.set_size_request(-1, 28)
             btn.connect("clicked", self._on_tab, tab_name.lower())
             self._tab_btns[tab_name.lower()] = btn
             tabs.pack_start(btn, expand=False, fill=False, padding=0)
         bar.pack_start(tabs, expand=True, fill=False, padding=0)
         self._status_lbl = _muted("Updated just now")
-        bar.pack_start(self._status_lbl, expand=False, fill=False, padding=0)
+        self._status_lbl.set_ellipsize(Pango.EllipsizeMode.NONE)
+        bar.pack_start(self._status_lbl, expand=True, fill=True, padding=0)
         self._about_btn = Gtk.Button()
         self._about_btn.set_size_request(28, 28)
         self._about_btn.set_tooltip_text("About Spaced Monitor")
@@ -254,12 +337,34 @@ class MonitorWindow(Gtk.Window):
         self._about_btn.add(Gtk.Image.new_from_icon_name(
             "help-about-symbolic", Gtk.IconSize.SMALL_TOOLBAR))
         bar.pack_start(self._about_btn, expand=False, fill=False, padding=0)
+        self._temperature_btn = Gtk.ToggleButton(label=fmt.temperature_unit())
+        self._temperature_btn.set_active(fmt.CELSIUS)
+        self._temperature_btn.set_tooltip_text("Temperature units: toggle Fahrenheit / Celsius")
+        self._temperature_btn.connect("toggled", self._on_temperature_toggle)
+        bar.pack_start(self._temperature_btn, False, False, 0)
         self._theme_btn = Gtk.Button()
         self._theme_btn.set_size_request(28, 28)
         self._theme_btn.connect("clicked", self._on_theme_toggle)
         self._update_theme_btn_icon()
         bar.pack_start(self._theme_btn, expand=False, fill=False, padding=0)
         return bar
+
+    def _on_temperature_toggle(self, button):
+        fmt.CELSIUS = button.get_active()
+        button.set_label(fmt.temperature_unit())
+        saved = preferences.save_celsius(fmt.CELSIUS)
+        button.set_tooltip_text("Temperature units: toggle Fahrenheit / Celsius" if saved else
+                                "Units changed for this session; preference could not be saved")
+        if self._snapshot:
+            # Refresh display without recording another history sample.
+            for card in (self._cpu_card, self._gpu_card, self._mem_card):
+                card.update(self._snapshot)
+            self._temp_card.update(self._snapshot, record=False)
+            for gpu in gpu_devices(self._snapshot)[1:]:
+                self._extra_gpu_cards[gpu.device_id][0].update(replace(self._snapshot, gpu=gpu))
+            self._hardware_page.update(self._snapshot)
+            if self._detail_key:
+                self._details.update(self._snapshot)
 
     def _on_about(self, _button) -> None:
         """Show package identity and the installed version."""
@@ -300,13 +405,24 @@ class MonitorWindow(Gtk.Window):
         self._disk_card = DiskCard(self._pal)
         self._net_card = NetworkCard(self._pal)
         self._app_table = AppTable(self._pal)
+        for card, key in ((self._cpu_card, "cpu"), (self._mem_card, "memory"),
+                          (self._gpu_card, "gpu:first"), (self._gmem_card, "vram:first"),
+                          (self._temp_card, "sensors"), (self._disk_card, "storage"),
+                          (self._net_card, "network")):
+            self._attach_details(card, key)
         # Keep the search controls, column headers and several process rows
         # usable even when the whole overview needs vertical scrolling.
-        self._app_table.set_size_request(-1, 180)
+        self._app_table.set_size_request(-1, 110)
+        more = Gtk.Button(label="More")
+        more.set_halign(Gtk.Align.END)
+        more.connect("clicked", lambda _b: self._focus_card(self._app_table))
+        self._app_table.pack_end(more, False, False, 0)
 
-        gauges = _flow_row(4, 8)
-        for card in (self._cpu_card, self._gpu_card,
-                     self._mem_card, self._gmem_card):
+        gauges = _flow_row(4, 2)
+        gauges.set_homogeneous(False)
+        self._gauges = gauges
+        for card in (self._cpu_card, self._mem_card,
+                     self._gpu_card, self._gmem_card):
             card.set_hexpand(True)
             card.set_size_request(width=80, height=-1)
             gauges.add(card)
@@ -338,6 +454,7 @@ class MonitorWindow(Gtk.Window):
         outer.connect("size-allocate", self._on_overview_resize)
         graphs.connect("size-allocate", self._on_graphs_resize)
         scroll = Gtk.ScrolledWindow()
+        scroll.get_style_context().add_class("overview")
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.add(outer)
         return scroll
@@ -349,7 +466,9 @@ class MonitorWindow(Gtk.Window):
 
     def _mid_side_by_side_min(self) -> int:
         """Width below which Temperature / Disk / Network cannot sit side by side."""
-        return (self._temp_card.get_preferred_width()[0]
+        # Word wrapping permits tiny label minima, but three graphs still
+        # need a readable width and room for divider movement.
+        return max(800, self._temp_card.get_preferred_width()[0]
                 + self._disk_card.get_preferred_width()[0]
                 + self._net_card.get_preferred_width()[0] + 24)
 
@@ -397,6 +516,9 @@ class MonitorWindow(Gtk.Window):
         if size == getattr(self, "_ov_size", None):
             return
         self._ov_size = size
+        columns = 4 if allocation.width >= 800 else 2 if allocation.width >= 480 else 1
+        self._gauges.set_min_children_per_line(columns)
+        self._gauges.set_max_children_per_line(columns)
         GLib.timeout_add(0, self._apply_fractions)
 
     def _apply_fractions(self) -> bool:
@@ -475,8 +597,10 @@ class MonitorWindow(Gtk.Window):
 
     def _on_tab(self, _btn, name: str) -> None:
         """Switch to the clicked page."""
-        if name == self._tab or name not in self._pages:
+        if name not in self._pages:
             return
+        self._detail_key = None
+        self._restore_focused_card()
         self._tab = name
         self._show_tab()
         self._refresh_visible_page()
@@ -487,6 +611,8 @@ class MonitorWindow(Gtk.Window):
         apps = getattr(self, "_apps_latest", None)
         if self._tab == "hardware" and snap is not None:
             self._hardware_page.update(snap)
+        elif self._tab == "suggest":
+            self._suggest_rows.update(self._suggestions.rows())
         elif self._tab == "overview" and apps is not None:
             self._app_table.set_apps(apps)
         elif self._tab == "processes" and apps is not None:
@@ -499,7 +625,8 @@ class MonitorWindow(Gtk.Window):
     def _show_tab(self) -> None:
         """Show one page at a time and mark its tab button as selected."""
         for key, page in self._pages.items():
-            page.set_visible(key == self._tab)
+            page.set_visible(key == self._tab and self._detail_key is None)
+        self._details.set_visible(self._detail_key is not None)
         for key, btn in self._tab_btns.items():
             ctx = btn.get_style_context()
             if key == self._tab:
@@ -545,11 +672,37 @@ class MonitorWindow(Gtk.Window):
     def _apply_snapshot(self, snap: Snapshot) -> bool:
         """Apply a snapshot on the GTK thread; returns False to stop."""
         self._snapshot = snap
+        self._history.update(snap)
+        self._suggestions.update(snap)
+        if self._tab == "suggest":
+            self._suggest_rows.update(self._suggestions.rows())
         self._last_sample_time = time.monotonic()
         self._cpu_card.update(snap)
         self._gpu_card.update(snap)
         self._mem_card.update(snap)
         self._gmem_card.update(snap)
+        devices = gpu_devices(snap)
+        first_key = "gpu:" + devices[0].device_id if devices else "gpu:unavailable"
+        self._gpu_card._detail_key = first_key
+        self._gmem_card._detail_key = first_key.replace("gpu:", "vram:", 1)
+        active = set()
+        for gpu in devices[1:]:
+            active.add(gpu.device_id)
+            if gpu.device_id not in self._extra_gpu_cards:
+                pair = (GpuCard(self._pal), GpuMemoryCard(self._pal))
+                for card in pair:
+                    self._attach_details(card, ("vram:" if isinstance(card, GpuMemoryCard) else "gpu:") + gpu.device_id)
+                    card.set_hexpand(True)
+                    self._gauges.add(card)
+                    card.get_parent().show_all()
+                self._extra_gpu_cards[gpu.device_id] = pair
+            for card in self._extra_gpu_cards[gpu.device_id]:
+                card.get_parent().show()
+                card.update(replace(snap, gpu=gpu))
+        for identity, pair in self._extra_gpu_cards.items():
+            if identity not in active:
+                for card in pair:
+                    card.get_parent().hide()
         self._temp_card.update(snap)
         self._disk_card.update(snap)
         self._net_card.update(snap)
@@ -558,6 +711,8 @@ class MonitorWindow(Gtk.Window):
         # catches them up when they are shown.
         if self._tab == "hardware":
             self._hardware_page.update(snap)
+        if self._detail_key is not None:
+            self._details.update(snap)
         self._status_lbl.set_text("Updated just now")
         return False
 
@@ -576,8 +731,9 @@ class MonitorWindow(Gtk.Window):
     def _update_footer(self, snap: Snapshot) -> None:
         """Refresh footer values."""
         fans = snap.fans
-        total_rpm = sum(f.rpm for f in fans) if fans else None
-        self._f_fans.set_value(fmt.rpm(total_rpm))
+        self._f_fans.set_value(fmt.rpm(fans[0].rpm) if len(fans) == 1 else
+                               f"{len(fans)} fans" if fans else fmt.EMDASH)
+        self._f_fans.set_tooltip_text("\n".join(f"{f.label}: {fmt.rpm(f.rpm)}" for f in fans))
         self._f_cpu_pow.set_value(fmt.watts(snap.cpu_power_w))
         gpu = snap.gpu
         self._f_gpu_pow.set_value(fmt.watts(gpu.power_w if gpu else None))
@@ -649,6 +805,10 @@ class MonitorWindow(Gtk.Window):
         self._app_table.set_palette(pal)
         self._processes_page.set_palette(pal)
         self._hardware_page.set_palette(pal)
+        self._details.set_palette(pal)
+        for pair in self._extra_gpu_cards.values():
+            for card in pair:
+                card.set_palette(pal)
         self._show_tab()
         self._update_theme_btn_icon()
 

@@ -260,6 +260,8 @@ window, .background {{
     border-bottom: 1px solid {b};
     padding: 6px 10px;
 }}
+.topbar button {{ padding: 4px 4px; }}
+.topbar .card-title {{ font-size: 11px; }}
 button {{
     background-image: none;
     background-color: {c};
@@ -305,13 +307,17 @@ combobox button {{
     background-color: {c};
     border: 1px solid {b};
     border-radius: 12px;
-    padding: 14px;
+    padding: 6px;
     color: {t};
 }}
 /* The app list needs vertical room for rows, so it uses a tighter frame. */
 .app-table {{
     padding: 8px 10px;
 }}
+.overview .card {{ padding: 4px; }}
+.overview .card-title {{ font-size: 11px; }}
+.overview button {{ padding: 2px 8px; min-height: 0; }}
+.overview entry {{ padding: 2px 8px; min-height: 20px; }}
 .card-title {{
     font-weight: bold;
     font-size: 13px;
@@ -319,7 +325,7 @@ combobox button {{
 }}
 .big-value {{
     font-weight: bold;
-    font-size: 22px;
+    font-size: 13px;
     color: {t};
 }}
 .muted {{

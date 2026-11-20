@@ -4,6 +4,7 @@
 import math
 import os
 import unittest
+from unittest.mock import patch
 
 import cairo
 
@@ -104,6 +105,19 @@ class TestLineGraph(unittest.TestCase):
 
     def _vals(self):
         return [50 + 20 * math.sin(i / 20) for i in range(300)]
+
+    def test_compact_temperature_labels_and_plot_height(self):
+        for unit, low, high, expected in (("°F", 86, 194, ["100", "140", "180"]),
+                                          ("°C", 30, 90, ["30", "50", "70", "90"])):
+            with self.subTest(unit=unit), patch.object(widgets, "_text_right") as labels, \
+                    patch.object(widgets, "_text_centered") as clocks, \
+                    patch.object(widgets, "_paint_areas") as areas:
+                _, cr = _surface()
+                widgets.draw_line_graph(cr, 400, 200, DARK, [], low, high,
+                                        unit=unit, compact=True)
+                self.assertEqual([call.args[3] for call in labels.call_args_list], expected)
+                clocks.assert_not_called()
+                self.assertEqual(areas.call_args.args[2], 194)
 
     def test_full_graph(self):
         surf, cr = _surface()

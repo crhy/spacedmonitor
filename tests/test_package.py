@@ -10,7 +10,7 @@ from spaced_monitor import app as app_mod
 
 class Package(unittest.TestCase):
     def test_version(self):
-        self.assertRegex(spaced_monitor.__version__, r"^\d+\.\d+\.\d+$")
+        self.assertRegex(spaced_monitor.__version__, r"^\d+\.\d+\.\d+(~rc\d+)?$")
 
 
 class NoDisplay(unittest.TestCase):

@@ -75,17 +75,20 @@ def _gauge_geometry(w: float, h: float) -> tuple[float, float, float, float]:
 
 
 def _draw_gauge_text(cr, cx: float, cy: float, size: float, percent: float,
-                     pal) -> None:
+                     pal, display=None) -> None:
     """Draw the percent value big with a smaller % sign, centred."""
     value = int(round(_clamp(percent, 0.0, 100.0)))
-    num = str(value)
+    num = str(value) if percent is not None else "—"
+    suffix = "%" if percent is not None else ""
+    if display is not None:
+        num, suffix = display
     cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    big = size * 0.30
+    big = size * min(0.30, 1.0 / max(1, len(num)))
     small = big * 0.55
     cr.set_font_size(big)
     wn = cr.text_extents(num).x_advance
     cr.set_font_size(small)
-    wp = cr.text_extents("%").x_advance
+    wp = cr.text_extents(suffix).x_advance
     cr.set_source_rgb(*pal.text)
     baseline = cy + big * 0.35
     x = cx - (wn + wp) / 2.0
@@ -94,10 +97,10 @@ def _draw_gauge_text(cr, cx: float, cy: float, size: float, percent: float,
     cr.show_text(num)
     cr.set_font_size(small)
     cr.move_to(x + wn, baseline)
-    cr.show_text("%")
+    cr.show_text(suffix)
 
 
-def draw_gauge(cr, w: float, h: float, pal, kind: str, percent: float) -> None:
+def draw_gauge(cr, w: float, h: float, pal, kind: str, percent: float, display=None) -> None:
     """Draw a 240-degree gauge: track arc, gradient value arc, centred percent."""
     cx, cy, r, lw = _gauge_geometry(w, h)
     cr.set_line_width(lw)
@@ -115,7 +118,7 @@ def draw_gauge(cr, w: float, h: float, pal, kind: str, percent: float) -> None:
         grad.add_color_stop_rgb(1.0, *stop)
         cr.set_source(grad)
         cr.stroke()
-    _draw_gauge_text(cr, cx, cy, min(w, h), p, pal)
+    _draw_gauge_text(cr, cx, cy, min(w, h), p if percent is not None else None, pal, display)
 
 
 class Gauge(Gtk.DrawingArea):
@@ -126,19 +129,20 @@ class Gauge(Gtk.DrawingArea):
         self._kind = kind
         self._pal = pal or DARK
         self._percent = 0.0
+        self.display = None
         self.set_size_request(60, 50)
         self.connect("draw", self._on_draw)
 
     def set_percent(self, v: float) -> None:
         """Set the gauge value in percent (0-100, clamped) and redraw."""
-        self._percent = _clamp(v, 0.0, 100.0)
+        self._percent = _clamp(v, 0.0, 100.0) if v is not None else None
         self.queue_draw()
 
     def _on_draw(self, da, cr) -> None:
         """Paint the gauge from the stored value."""
         width, height = da.get_allocated_width(), da.get_allocated_height()
         draw_gauge(cr, width, height, self._pal,
-                   self._kind, self._percent)
+                   self._kind, self._percent, self.display)
 
 
 def draw_stacked_bar(cr, w: float, h: float, segments) -> None:
@@ -366,14 +370,21 @@ def _text_right(cr, x_right, cy, text) -> None:
 
 
 def draw_line_graph(cr, w, h, pal, series, y_min, y_max, threshold=None,
-                    unit="°C", seconds=300) -> None:
+                    unit="°C", seconds=300, compact=False) -> None:
     """Draw a scrolling multi-series graph with grid, time and threshold."""
     x0, y0, x1, y1 = _graph_area(w, h)
+    if compact:
+        y1 = h - 6.0
     plot_w = x1 - x0
     cr.set_line_width(1.0)
     cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
     cr.set_font_size(9)
-    g = math.ceil(y_min / 10.0) * 10.0
+    step = max(10, math.ceil((y_max - y_min) / 60) * 10)
+    g = math.ceil(y_min / step) * step
+    if compact:
+        # Keep the first tick (100°F at the default range), then every other
+        # tick: 100, 140, 180. Celsius and expanded ranges stay sparse too.
+        step *= 2
     while g <= y_max + 1e-9:
         y = _value_y(g, y0, y1, y_min, y_max)
         cr.set_source_rgba(*pal.border, 0.6)
@@ -382,14 +393,23 @@ def draw_line_graph(cr, w, h, pal, series, y_min, y_max, threshold=None,
         cr.stroke()
         cr.set_source_rgb(*pal.muted)
         _text_right(cr, x0 - 3, y, str(int(g)))
-        g += 10.0
+        g += step
     now = time.time()
-    for age in range(0, int(seconds) + 1, 60):
+    for age in (() if compact else range(0, int(seconds) + 1, 60)):
         x = x1 - age * (plot_w / float(seconds))
         cr.set_source_rgb(*pal.muted)
         _text_centered(cr, x, y1 + 9, time.strftime("%H:%M", time.localtime(now - age)))
-    plotted = [(c, _series_points(v, x0, x1, y0, y1, y_min, y_max, seconds))
-               for c, v in (series or [])]
+    # Split at missing samples while preserving each sample's time position.
+    plotted = []
+    for colour, values in (series or []):
+        values = list(values)
+        start = 0
+        for end in range(len(values) + 1):
+            if end == len(values) or values[end] is None:
+                if end > start:
+                    segment = [None] * start + values[start:end] + [None] * (len(values) - end)
+                    plotted.append((colour, _series_points(segment, x0, x1, y0, y1, y_min, y_max, seconds)))
+                start = end + 1
     _paint_areas(cr, plotted, y1)
     for colour, pts in plotted:
         cr.set_line_width(2.0)
@@ -412,13 +432,14 @@ class LineGraph(Gtk.DrawingArea):
     """A scrolling multi-series temperature graph with a ring buffer."""
 
     def __init__(self, colors, y_min, y_max, pal=None, threshold=None,
-                 unit="°C", seconds=300):
+                 unit="°C", seconds=300, compact=False):
         super().__init__()
         self._pal = pal or DARK
         self._y_min = float(y_min)
         self._y_max = float(y_max)
         self._threshold = threshold
         self._unit = unit
+        self._compact = compact
         self._seconds = max(1, int(seconds))
         self._series = [[c, []] for c in colors]
         self.set_size_request(120, 60)
@@ -450,7 +471,8 @@ class LineGraph(Gtk.DrawingArea):
         width, height = da.get_allocated_width(), da.get_allocated_height()
         draw_line_graph(cr, width, height, self._pal,
                         [(e[0], e[1]) for e in self._series], self._y_min,
-                        self._y_max, self._threshold, self._unit, self._seconds)
+                        self._y_max, self._threshold, self._unit, self._seconds,
+                        self._compact)
 
 
 def _spark_points(values, x0, x1, y0, y1, maxv):

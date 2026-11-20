@@ -373,7 +373,7 @@ class TestSnapshot(unittest.TestCase):
         def run(cmd, timeout=None):
             raise FileNotFoundError(2, "nvidia-smi")
         sampler = Sampler(ps=self._ps(), read=lambda p: "", run=run,
-                          drm_root="build/nope")
+                          drm_root="build/nope", gpu_fn=lambda: None)
         assert sampler.sample().gpu is None
 
     def test_interface_addresses_refresh_on_slow_cadence(self):

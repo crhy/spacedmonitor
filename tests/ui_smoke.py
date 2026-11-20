@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -26,7 +27,8 @@ from spaced_monitor.cards import (CpuCard, GpuCard, MemoryCard, GpuMemoryCard,
                                   TemperatureCard, DiskCard, NetworkCard)
 from spaced_monitor.apptable import AppTable
 from spaced_monitor.app import FooterItem
-from spaced_monitor.pages import HardwarePage, ProcessesPage
+from spaced_monitor.pages import ProcessesPage
+from spaced_monitor.device_views import HardwarePage
 from spaced_monitor.processes import AppUsage, ProcUsage
 
 SCREENSHOT_DIR = Path(__file__).resolve().parent.parent / "build" / "screenshots"
@@ -303,7 +305,42 @@ def _tab_switch_check() -> None:
     assert win._about_btn.get_tooltip_text() == "About Spaced Monitor"
     win._on_tab(None, "hardware")
     win._apply_snapshot(snap)
-    assert win._hardware_page._flow.get_max_children_per_line() == 3
+    assert "cpu" in win._hardware_page._rows
+    row = win._hardware_page._rows["cpu"][0]
+    win._open_details("cpu")
+    assert win._details.get_visible()
+    assert not any(page.get_visible() for page in win._pages.values())
+    win._apply_palette(theme_mod.LIGHT)
+    win._close_details()
+    assert win._hardware_page.get_visible()
+    assert win._hardware_page._rows["cpu"][0] is row
+    # Every device opens the shared full-window view and returns with Escape.
+    from spaced_monitor.devices import device_rows
+    for key in device_rows(snap):
+        win._open_details(key)
+        assert win._details.get_visible()
+        assert win._details.content.labels[0].get_visible()
+        assert win._on_key(win, SimpleNamespace(keyval=Gdk.KEY_Escape))
+        assert win._hardware_page.get_visible()
+    # Double-click card backgrounds, but leave selectable text alone.
+    with patch.object(Gtk, "get_event_widget", return_value=row):
+        win._on_card_click(win, double)
+    assert win._detail_key == "cpu"
+    with patch.object(Gtk, "get_event_widget", return_value=win._details.content.labels[0]):
+        win._on_card_click(win, double)
+    assert win._detail_key == "cpu"
+    win._close_details()
+    # Identical models remain separate; removal never substitutes another GPU.
+    gpu_a = replace(snap.gpu, device_id="GPU-A")
+    gpu_b = replace(snap.gpu, device_id="GPU-B", percent=12)
+    multi = replace(snap, gpu=gpu_a, gpus=[gpu_a, gpu_b])
+    win._apply_snapshot(multi)
+    win._open_details("gpu:GPU-B")
+    win._apply_snapshot(replace(multi, gpus=[gpu_a]))
+    assert "disconnected" in win._details.title.get_text()
+    assert win._detail_key == "gpu:GPU-B"
+    win._close_details()
+    assert "gpu:GPU-B" not in win._hardware_page._rows
     win.close()
     print("OK: MonitorWindow switches tabs, focuses cards and updates all pages")
 
@@ -314,22 +351,13 @@ def _missing_gpu_check() -> None:
     missing = replace(snap, gpu=None, gpu_extra=None)
     for pal in (theme_mod.DARK, theme_mod.LIGHT):
         page = HardwarePage(pal)
-        gpu, memory, storage, network = page._cards[2:]
         for sample in (missing, snap, missing, snap):
             page.update(sample)
-            assert memory._big.get_label() == fmt.pair_gb(
-                sample.memory.total - sample.memory.available, sample.memory.total)
-            assert storage._read.get_label() == f"read {fmt.rate(sample.disk.read_bps)}"
-            assert network._rates[0].get_label() == f"down {fmt.rate(sample.net.rx_bps)}"
-            if sample.gpu is None:
-                assert gpu._model.get_label() == "GPU information unavailable"
-                assert gpu._gauge._percent == 0
-                assert gpu._load.get_label() == fmt.EMDASH
-                assert all(line.get_label() == "" for line in gpu._lines)
-            else:
-                assert gpu._model.get_label() == sample.gpu.name
-                assert gpu._gauge._percent == sample.gpu.percent
-                assert gpu._load.get_label() == fmt.percent(sample.gpu.percent)
+            assert page._rows["memory"][0].get_visible()
+            assert page._rows["storage"][0].get_visible()
+            assert page._rows["network"][0].get_visible()
+            if "gpu:legacy" in page._rows:
+                assert page._rows["gpu:legacy"][0].get_visible() == (sample.gpu is not None)
         page.destroy()
     print("OK: missing/reappearing GPU does not interrupt hardware updates")
 

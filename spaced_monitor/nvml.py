@@ -95,16 +95,12 @@ class _MemoryV1(ctypes.Structure):
 
 
 class _ProcessInfo(ctypes.Structure):
-    """nvmlProcessInfo_v3_t: pid, usedMemory, processName, then extras."""
+    """nvmlProcessInfo_t used by the v2/v3 running-process entry points."""
     _fields_ = [
         ("pid", ctypes.c_uint),
         ("usedMemory", ctypes.c_ulonglong),
-        ("processName", ctypes.c_char * 1024),
-        ("residentSize", ctypes.c_ulonglong),
-        ("managedSize", ctypes.c_ulonglong),
-        ("offsetsSize", ctypes.c_ulonglong),
-        ("offsetsCount", ctypes.c_ulonglong),
-        ("offsets", ctypes.POINTER(ctypes.c_ulonglong)),
+        ("gpuInstanceId", ctypes.c_uint),
+        ("computeInstanceId", ctypes.c_uint),
     ]
 
 
@@ -127,6 +123,35 @@ def available() -> bool:
     return _init()
 
 
+def device_count() -> int:
+    """Number of devices visible to this process."""
+    if not _init():
+        return 0
+    lib = _load()
+    count = ctypes.c_uint()
+    fn = lib.nvmlDeviceGetCount_v2
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint)]
+    fn.restype = ctypes.c_int
+    return count.value if fn(ctypes.byref(count)) == 0 else 0
+
+
+def device_uuid(index: int) -> Optional[str]:
+    """Stable identity; never use enumeration order as device identity."""
+    if not _init():
+        return None
+    lib = _load()
+    dev = _device_handle(lib, index)
+    if dev is None:
+        return None
+    buf = ctypes.create_string_buffer(96)
+    fn = lib.nvmlDeviceGetUUID
+    fn.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint]
+    fn.restype = ctypes.c_int
+    if fn(dev, buf, ctypes.c_uint(len(buf))) != 0:
+        return None
+    return buf.value.decode("ascii", errors="replace") or None
+
+
 def device_name(index: int = 0) -> Optional[str]:
     """Return GPU name for device *index*."""
     lib = _load()
@@ -137,15 +162,9 @@ def device_name(index: int = 0) -> Optional[str]:
         return None
     buf = ctypes.create_string_buffer(96)
     lib.nvmlDeviceGetName.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                                      ctypes.c_uint, ctypes.c_uint]
+                                      ctypes.c_uint]
     lib.nvmlDeviceGetName.restype = ctypes.c_int
-    # NVML >= 12: (device, name, type, length) — type 0 = backend
-    rc = lib.nvmlDeviceGetName(dev, buf, ctypes.c_uint(0), ctypes.c_uint(96))
-    if rc != 0:
-        # Fallback: older 3-arg signature (device, name, length)
-        lib.nvmlDeviceGetName.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                                          ctypes.c_uint]
-        rc = lib.nvmlDeviceGetName(dev, buf, ctypes.c_uint(96))
+    rc = lib.nvmlDeviceGetName(dev, buf, ctypes.c_uint(96))
     if rc != 0:
         return None
     return buf.value.decode("utf-8", errors="replace") or None
@@ -211,14 +230,7 @@ def memory_info(index: int = 0) -> tuple[Optional[int], Optional[int]]:
     dev = _device_handle(lib, index)
     if dev is None:
         return None, None
-    # Try v2 first (has reserved field).
-    mem = _Memory()
-    lib.nvmlDeviceGetMemoryInfo_v2.argtypes = [ctypes.c_void_p,
-                                               ctypes.POINTER(_Memory)]
-    lib.nvmlDeviceGetMemoryInfo_v2.restype = ctypes.c_int
-    if lib.nvmlDeviceGetMemoryInfo_v2(dev, ctypes.byref(mem)) == 0:
-        return int(mem.used), int(mem.total)
-    # Fallback to v1 (total, free, used — no reserved).
+    # The stable v1 ABI does not require a versioned structure.
     mem1 = _MemoryV1()
     lib.nvmlDeviceGetMemoryInfo.argtypes = [ctypes.c_void_p,
                                             ctypes.POINTER(_MemoryV1)]
@@ -266,34 +278,47 @@ def pci_link(index: int = 0) -> tuple[Optional[str], Optional[str]]:
 
 def compute_processes(index: int = 0) -> dict[int, int]:
     """Per-pid GPU memory in bytes from nvmlDeviceGetComputeRunningProcesses_v3."""
+    return _running_processes(index, "Compute") or {}
+
+
+def memory_processes(index=0):
+    """Compute and graphics allocations, deduplicated per PID; None if unavailable."""
+    compute = _running_processes(index, "Compute")
+    graphics = _running_processes(index, "Graphics")
+    if compute is None and graphics is None:
+        return None
+    result = dict(compute or {})
+    for pid, used in (graphics or {}).items():
+        result[pid] = max(used, result.get(pid, 0))
+    return result
+
+
+def _running_processes(index, kind):
     lib = _load()
     if lib is None or not _init():
-        return {}
+        return None
     dev = _device_handle(lib, index)
     if dev is None:
-        return {}
-    count = ctypes.c_uint(64)
-    buf = (_ProcessInfo * 64)()
-    lib.nvmlDeviceGetComputeRunningProcesses_v3.argtypes = [
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(_ProcessInfo)
-    ]
-    lib.nvmlDeviceGetComputeRunningProcesses_v3.restype = ctypes.c_int
-    rc = lib.nvmlDeviceGetComputeRunningProcesses_v3(
-        dev, ctypes.byref(count), ctypes.cast(buf, ctypes.POINTER(_ProcessInfo)))
-    if rc != 0:
-        # Fallback to v2
-        lib.nvmlDeviceGetComputeRunningProcesses_v2.argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(_ProcessInfo)
-        ]
-        lib.nvmlDeviceGetComputeRunningProcesses_v2.restype = ctypes.c_int
-        rc = lib.nvmlDeviceGetComputeRunningProcesses_v2(
-            dev, ctypes.byref(count), ctypes.cast(buf, ctypes.POINTER(_ProcessInfo)))
-        if rc != 0:
-            return {}
-    result: dict[int, int] = {}
-    for i in range(count.value):
-        result[buf[i].pid] = int(buf[i].usedMemory)
-    return result
+        return None
+    for version in (3, 2):
+        fn = getattr(lib, f"nvmlDeviceGet{kind}RunningProcesses_v{version}", None)
+        if fn is None:
+            continue
+        fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(_ProcessInfo)]
+        fn.restype = ctypes.c_int
+        capacity = 64
+        for _ in range(3):
+            count = ctypes.c_uint(capacity)
+            buf = (_ProcessInfo * capacity)()
+            rc = fn(dev, ctypes.byref(count), buf)
+            if rc == 7 and count.value <= 16384:  # NVML_ERROR_INSUFFICIENT_SIZE
+                capacity = max(capacity * 2, count.value)
+                continue
+            if rc == 0 and count.value <= capacity:
+                return {buf[i].pid: int(buf[i].usedMemory) for i in range(count.value)
+                        if buf[i].usedMemory != 2**64 - 1}
+            break
+    return None
 
 
 _last_seen_ts = ctypes.c_ulonglong(0)

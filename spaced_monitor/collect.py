@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import re
 import subprocess
@@ -22,6 +23,9 @@ class CpuInfo:
     per_core: list[float]
     freq_mhz: float
     temp_c: Optional[float]
+    physical_cores: Optional[int] = None
+    min_mhz: Optional[float] = None
+    max_mhz: Optional[float] = None
 
 
 @dataclass
@@ -48,6 +52,7 @@ class Temperature:
     chip: str
     label: str
     celsius: float
+    source: str = ""
 
 
 @dataclass
@@ -85,6 +90,10 @@ class GpuInfo:
     power_w: Optional[float]
     mem_used: Optional[int]
     mem_total: Optional[int]
+    device_id: str = "legacy"
+    driver: Optional[str] = None
+    pci_link: Optional[str] = None
+    memory_processes: Optional[dict] = None
 
 
 @dataclass
@@ -151,29 +160,29 @@ def cpu_temp(ps) -> Optional[float]:
     if k10:
         for r in k10:
             if r.label == "Tctl":
-                return r.current
+                return _num(str(r.current))
         for r in k10:
             if r.label == "Tdie":
-                return r.current
+                return _num(str(r.current))
     # coretemp: "Package id 0"
     core = sensors.get("coretemp")
     if core:
         for r in core:
             if r.label == "Package id 0":
-                return r.current
+                return _num(str(r.current))
     # zenpower
     zen = sensors.get("zenpower")
     if zen:
-        return zen[0].current
-    # fallback: first sensor's first reading
-    first = next(iter(sensors.values()), None)
-    if first:
-        return first[0].current
+        return _num(str(zen[0].current))
+    # A disk or DIMM sensor is not a CPU temperature.
+    for chip in ("cpu_thermal", "soc_thermal"):
+        if sensors.get(chip):
+            return _num(str(sensors[chip][0].current))
     return None
 
 
 def fans(ps) -> list[Fan]:
-    """Return list of Fan with rpm > 0 from psutil.sensors_fans()."""
+    """Return valid fan readings, including stopped fans."""
     try:
         raw = ps.sensors_fans()
     except (AttributeError, OSError):
@@ -181,7 +190,7 @@ def fans(ps) -> list[Fan]:
     result: list[Fan] = []
     for name, readings in raw.items():
         for r in readings:
-            if r.current > 0:
+            if r.current is not None and math.isfinite(r.current) and r.current >= 0:
                 result.append(Fan(label=f"{name} {r.label}".strip(), rpm=int(r.current)))
     return result
 
@@ -195,9 +204,13 @@ def temperatures(ps) -> list:
     result: list[Temperature] = []
     for chip, readings in raw.items():
         for r in readings:
+            value = _num(str(r.current))
+            if value is None:
+                continue
             result.append(Temperature(chip=chip,
                                       label=(r.label or chip).strip(),
-                                      celsius=float(r.current)))
+                                      celsius=value,
+                                      source=getattr(r, "source", "")))
     return result
 
 
@@ -315,7 +328,8 @@ def _num(raw: str) -> Optional[float]:
     if not s or s == "[N/A]":
         return None
     try:
-        return float(s)
+        value = float(s)
+        return value if math.isfinite(value) else None
     except ValueError:
         return None
 
@@ -494,6 +508,93 @@ def gpu(run: Callable = None, drm_root: str = "/sys/class/drm") -> Optional[GpuI
     return amd_gpu(root=drm_root)
 
 
+def all_gpus(run: Callable = None, drm_root: str = "/sys/class/drm") -> list[GpuInfo]:
+    """All NVIDIA and DRM devices, without conflating identical model names.
+
+    NVML is preferred; its fallback is one batched, bounded command. DRM
+    supplies AMD/Intel devices even when NVIDIA devices are also present.
+    Only already exposed read-only sysfs attributes are accessed.
+    """
+    from spaced_monitor import nvml
+    devices = []
+    try:
+        count = nvml.device_count()
+        for index in range(count):
+            identity = nvml.device_uuid(index)
+            if not identity:
+                continue
+            used, total = nvml.memory_info(index)
+            gen, width = nvml.pci_link(index)
+            devices.append(GpuInfo(
+                _gpu_name(nvml.device_name(index) or "NVIDIA GPU"),
+                nvml.utilization(index), nvml.temperature(index),
+                nvml.power_usage(index), used, total, identity,
+                nvml.driver_version(),
+                f"Gen {gen} ×{width}" if gen and width else None,
+                nvml.memory_processes(index)))
+    except (AttributeError, OSError):
+        devices = []
+    if not devices:
+        try:
+            output = (run or _default_run)([
+                "nvidia-smi", "--query-gpu=uuid,name,utilization.gpu,temperature.gpu,power.draw,memory.used,memory.total,driver_version",
+                "--format=csv,noheader,nounits"], timeout=2.0)
+        except (OSError, subprocess.SubprocessError):
+            output = ""
+        for line in output.splitlines():
+            fields = [v.strip() for v in line.split(",")]
+            if len(fields) != 8 or not fields[0].startswith("GPU-"):
+                continue
+            devices.append(GpuInfo(_gpu_name(fields[1]), _num(fields[2]),
+                                   _num(fields[3]), _num(fields[4]),
+                                   _mib_to_bytes(_num(fields[5])),
+                                   _mib_to_bytes(_num(fields[6])), fields[0], fields[7]))
+    have_nvidia = bool(devices)
+    seen = set()
+    for card in sorted(glob.glob(os.path.join(drm_root, "card*"))):
+        if not re.fullmatch(r"card\d+", os.path.basename(card)):
+            continue
+        dev = os.path.join(card, "device")
+        identity = os.path.realpath(dev)
+        vendor = _read_first(os.path.join(dev, "vendor"))
+        if not vendor or identity in seen:
+            continue
+        seen.add(identity)
+        if vendor == "0x10de" and have_nvidia:
+            continue
+        driver_path = os.path.join(dev, "driver")
+        driver = os.path.basename(os.path.realpath(driver_path)) if os.path.exists(driver_path) else None
+        name = _read_first(os.path.join(dev, "product_name"))
+        if not name:
+            vendor_name = {"0x1002": "AMD", "0x8086": "Intel", "0x10de": "NVIDIA"}.get(vendor, vendor)
+            name = f"{vendor_name} GPU ({os.path.basename(identity)})"
+        temp = power = None
+        for hw in sorted(glob.glob(os.path.join(dev, "hwmon", "hwmon*"))):
+            raw_temp = _read_num(os.path.join(hw, "temp1_input"))
+            raw_power = _read_num(os.path.join(hw, "power1_average"))
+            if raw_temp is not None:
+                temp = raw_temp / 1000
+            if raw_power is not None:
+                power = raw_power / 1e6
+        devices.append(GpuInfo(name, _read_num(os.path.join(dev, "gpu_busy_percent")),
+                               temp, power, _as_int(_read_num(os.path.join(dev, "mem_info_vram_used"))),
+                               _as_int(_read_num(os.path.join(dev, "mem_info_vram_total"))),
+                               identity, driver))
+    # Driver enumeration puts NVIDIA's primary adapter first. Sorting UUIDs
+    # instead arbitrarily reversed adapters and promoted the integrated GPU.
+    return devices
+
+
+def ram_temperatures(readings: list[Temperature]) -> list[Temperature]:
+    """Recognize memory sensors, not arbitrary motherboard temperatures.
+
+    SPD/JEDEC hwmon drivers identify memory sensors; explicit DIMM/DRAM
+    labels are also useful. No slot number is inferred from sensor order.
+    """
+    return [t for t in readings if t.chip.lower() in {"jc42", "spd5118", "spd5hub"}
+            or re.search(r"\b(?:dimm\w*|dram)\b", t.label, re.IGNORECASE)]
+
+
 def _virtual_interface(name: str) -> bool:
     """True for loopback and container/VM plumbing, which we never show."""
     if name == "lo" or name == "lo:" or name.startswith("lo:"):
@@ -618,6 +719,8 @@ class Snapshot:
     filesystems: list = field(default_factory=list)
     interfaces: list = field(default_factory=list)
     gpu_extra: Optional[GpuExtra] = None
+    gpus: list = field(default_factory=list)
+    disk_devices: list = field(default_factory=list)
 
 
 class Sampler:
@@ -640,8 +743,11 @@ class Sampler:
         self._ps = ps
         self._cpu = CpuSampler(ps, read=read)
         self._rates = RateSampler(ps, clock=clock)
+        from spaced_monitor.suggestions import DiskActivity
+        self._disk_activity = DiskActivity(clock=clock)
         self._power = CpuPower(root=power_root, clock=clock)
-        self._gpu_fn = gpu_fn if gpu_fn is not None else lambda: gpu(run=run, drm_root=drm_root)
+        self._gpu_fn = gpu_fn if gpu_fn is not None else lambda: all_gpus(run=run, drm_root=drm_root)
+        self._legacy_gpu = gpu_fn is not None
         self._iface_fn = iface_fn if iface_fn is not None else lambda: interface_addresses(run)
         self._gpu_extra_fn = gpu_extra_fn if gpu_extra_fn is not None else lambda: nvidia_extra(run)
         self._clock = clock
@@ -671,6 +777,8 @@ class Sampler:
         """Take one full snapshot."""
         disk, net = self._rates.sample()
         info = self._gpu_fn()
+        devices = info if isinstance(info, list) else ([info] if info else [])
+        info = devices[0] if devices else None
         # Every sensor chip and fan sits on a slow bus whose driver re-reads
         # the hardware once its ~1 s cache expires: the full list and the fans
         # are read every _SLOW_EVERY_S, the CPU temperature every sample.
@@ -694,7 +802,9 @@ class Sampler:
             temperatures=self._temps_last,
             filesystems=filesystems(self._ps),
             interfaces=self._interfaces(refresh=slow),
-            gpu_extra=self._gpu_extra() if info else None,
+            gpu_extra=self._gpu_extra() if info and self._legacy_gpu else None,
+            gpus=devices,
+            disk_devices=self._disk_activity.sample(),
         )
 
 
@@ -756,7 +866,7 @@ class HwmonTemps:
                 value = int(raw) / 1000.0
             except ValueError:
                 continue
-            out.setdefault(chip, []).append(_HwReading(label, value))
+            out.setdefault(chip, []).append(_HwReading(label, value, os.path.realpath(path)))
         return out
 
 
@@ -765,6 +875,7 @@ class _HwReading:
     """One hwmon temperature, shaped like psutil's shwtemp for our readers."""
     label: str
     current: float
+    source: str = ""
 
 
 def _read_first(path: str) -> Optional[str]:
@@ -812,6 +923,10 @@ class CpuSampler:
     def __init__(self, ps, read: Callable[[str], str] = None) -> None:
         self._ps = ps
         self._model = cpu_model(read)
+        try:
+            self._physical_cores = ps.cpu_count(logical=False)
+        except (AttributeError, OSError, TypeError):
+            self._physical_cores = None
 
     def sample(self, sensors=None) -> CpuInfo:
         """Take one CPU sample (non-blocking, uses psutil deltas).
@@ -829,6 +944,9 @@ class CpuSampler:
             per_core=per_core,
             freq_mhz=freq_mhz,
             temp_c=temp,
+            physical_cores=self._physical_cores,
+            min_mhz=getattr(freq_obj, "min", None),
+            max_mhz=getattr(freq_obj, "max", None),
         )
 
 
